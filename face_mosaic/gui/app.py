@@ -24,7 +24,7 @@ import numpy as np
 import cv2
 
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QRect, QSize, QPoint, QSettings, QMimeData, QItemSelectionModel, QUrl
-from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QAction, QDrag, QKeySequence, QShortcut, QIcon
+from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QAction, QDrag, QKeySequence, QShortcut, QIcon, QCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QProgressBar, QTextEdit,
@@ -999,6 +999,46 @@ class MainWindow(QMainWindow):
         if hasattr(self, "spin_plate_conf"):
             self.spin_plate_conf.setEnabled(use_plates)
 
+        self._has_centered = False
+        self._center_on_screen()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, "_has_centered", False):
+            self._has_centered = True
+            self._center_on_screen()
+
+    def _center_on_screen(self):
+        """
+        Center window on screen and ensure it fits comfortably within
+        the available screen geometry (avoiding overflow on smaller/scaled displays).
+        """
+        screen = None
+        try:
+            cursor_pos = QCursor.pos()
+            screen = QApplication.screenAt(cursor_pos)
+        except Exception:
+            pass
+        if not screen:
+            screen = QApplication.primaryScreen()
+        if not screen:
+            return
+
+        avail = screen.availableGeometry()
+
+        # Scale down if display resolution/scaling causes the window to overflow
+        max_w = max(640, avail.width() - 40)
+        max_h = max(480, avail.height() - 60)
+        target_w = min(self.width(), max_w)
+        target_h = min(self.height(), max_h)
+
+        if target_w != self.width() or target_h != self.height():
+            self.resize(target_w, target_h)
+
+        geo = self.frameGeometry()
+        geo.moveCenter(avail.center())
+        self.move(geo.topLeft())
+
     def _on_blur_type_changed(self, text: str):
         if text.lower() == "mosaic":
             self.lbl_strength.setText("Mosaic Block Size:")
@@ -1873,9 +1913,20 @@ def run_app():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    try:
+        window = MainWindow()
+        window.show()
+        sys.exit(app.exec())
+    except Exception:
+        import traceback
+        err_msg = traceback.format_exc()
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(None, "auto-mosaic エラー", f"エラーが発生しました:\n\n{err_msg}")
+        except Exception:
+            pass
+        print(err_msg, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

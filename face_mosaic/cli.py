@@ -8,7 +8,7 @@ import argparse
 import sys
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from tqdm import tqdm
 
 from .config import AppConfig

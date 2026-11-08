@@ -915,6 +915,18 @@ def test_gui_layout_fits_full_hd(qapp):
     assert window.height() <= 720
 
 
+def test_gui_window_centering(qapp):
+    window = MainWindow()
+    assert hasattr(window, "_center_on_screen")
+    window._center_on_screen()
+    # Check that window fits within primary screen available geometry
+    screen = QApplication.primaryScreen()
+    if screen:
+        avail = screen.availableGeometry()
+        assert window.width() <= avail.width()
+        assert window.height() <= avail.height()
+
+
 
 
 
