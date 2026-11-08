@@ -14,15 +14,23 @@ import cv2
 import onnxruntime as ort
 
 class FaceDetection:
-    def __init__(self, bbox: np.ndarray, score: float, landmarks: Optional[np.ndarray] = None):
+    def __init__(
+        self,
+        bbox: np.ndarray,
+        score: float,
+        landmarks: Optional[np.ndarray] = None,
+        label: str = "face"
+    ):
         """
         bbox: [x1, y1, x2, y2]
         score: float
         landmarks: 5x2 array [[x, y], ...]
+        label: "face" or "plate"
         """
         self.bbox = np.array(bbox, dtype=np.float32)
         self.score = float(score)
         self.landmarks = np.array(landmarks, dtype=np.float32) if landmarks is not None else None
+        self.label = str(label)
 
     @property
     def x1(self) -> float:

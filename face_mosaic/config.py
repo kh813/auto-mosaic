@@ -1,5 +1,5 @@
 """
-Configuration loading and validation module for face-mosaic.
+Configuration loading and validation module for auto-mosaic.
 """
 
 from dataclasses import dataclass, field
@@ -14,6 +14,16 @@ class ModelConfig:
     nms_threshold: float = 0.4
     min_face_size: int = 15
     landmark_score_threshold: float = 0.3
+
+@dataclass
+class PlateModelConfig:
+    name: str = "license-plate-finetune-v1n.onnx"
+    conf_threshold: float = 0.40
+    nms_threshold: float = 0.45
+    min_plate_size: int = 12
+    margin_x: float = 0.15
+    margin_y: float = 0.15
+    shape: str = "rect"  # "rect" (recommended for rectangular plates) or "ellipse"
 
 @dataclass
 class TrackingConfig:
@@ -66,10 +76,10 @@ class FiltersConfig:
 
 @dataclass
 class OutputConfig:
-    codec: str = "hevc"  # "hevc" or "h264"
+    codec: str = "auto"  # "auto" (match input video), "hevc", or "h264"
     crf: int = 23
     preset: str = "medium"
-    bit_depth: str = "auto"  # "auto", "8bit", "10bit"
+    bit_depth: str = "auto"  # "auto" (match input video), "8bit", "10bit"
     preserve_color_tags: bool = True
     output_dir: str = ""
     filename_suffix: str = "_blurred"
@@ -78,11 +88,23 @@ class OutputConfig:
 
 @dataclass
 class AppConfig:
+    target: str = "faces"  # Options: "faces", "plates", "both"
     model: ModelConfig = field(default_factory=ModelConfig)
+    plate_model: PlateModelConfig = field(default_factory=PlateModelConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     blur: BlurConfig = field(default_factory=BlurConfig)
     filters: FiltersConfig = field(default_factory=FiltersConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+
+    @property
+    def detect_faces(self) -> bool:
+        t = (self.target or "faces").strip().lower()
+        return t in ("faces", "face", "both", "all")
+
+    @property
+    def detect_plates(self) -> bool:
+        t = (self.target or "faces").strip().lower()
+        return t in ("plates", "plate", "license_plate", "license_plates", "both", "all")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AppConfig":
@@ -90,8 +112,20 @@ class AppConfig:
         if not data:
             return cfg
 
+        if "target" in data and isinstance(data["target"], str):
+            t_val = data["target"].strip().lower()
+            if t_val in ("faces", "face"):
+                cfg.target = "faces"
+            elif t_val in ("plates", "plate", "license_plate", "license_plates"):
+                cfg.target = "plates"
+            elif t_val in ("both", "all"):
+                cfg.target = "both"
+
         if "model" in data and isinstance(data["model"], dict):
             cfg.model = ModelConfig(**{k: v for k, v in data["model"].items() if hasattr(ModelConfig, k)})
+
+        if "plate_model" in data and isinstance(data["plate_model"], dict):
+            cfg.plate_model = PlateModelConfig(**{k: v for k, v in data["plate_model"].items() if hasattr(PlateModelConfig, k)})
 
         if "tracking" in data and isinstance(data["tracking"], dict):
             cfg.tracking = TrackingConfig(**{k: v for k, v in data["tracking"].items() if hasattr(TrackingConfig, k)})

@@ -21,10 +21,11 @@ def isolate_qsettings(tmp_path, monkeypatch):
 
 def test_gui_window_initialization(qapp):
     window = MainWindow()
-    assert window.windowTitle() == "face-mosaic: Automated Face Blur Tool"
+    assert window.windowTitle() == "auto-mosaic: Automated Face & License Plate Blur Tool"
     assert window.combo_model.count() >= 3
     assert window.spin_pad_back.value() == 12
     assert window.spin_pad_fwd.value() == 24
+    assert window.combo_codec.currentData() == "auto"
     assert window.spin_crf.value() == 23
     assert window.combo_crf_preset.currentText() == "標準 (23 - 推奨)"
     assert window.combo_bit_depth.currentText() == "Auto (自動)"
@@ -856,6 +857,63 @@ def test_gui_crf_presets_and_output_options(qapp, tmp_path, monkeypatch):
     assert cfg.output.crf == 35
     assert cfg.output.bit_depth == "8bit"
     assert cfg.output.append_params_to_filename is True
+
+
+def test_gui_target_mode_selection_and_load_optimization_controls(qapp, tmp_path, monkeypatch):
+    window = MainWindow()
+
+    # Default is Faces Only ("faces")
+    assert window.combo_target.currentData() == "faces"
+    assert window.combo_model.isEnabled()
+    assert window.spin_conf.isEnabled()
+    assert not window.spin_plate_conf.isEnabled()
+
+    # Switch to Faces + Plates ("both")
+    window.combo_target.setCurrentIndex(1)
+    assert window.combo_target.currentData() == "both"
+    assert window.combo_model.isEnabled()
+    assert window.spin_conf.isEnabled()
+    assert window.spin_plate_conf.isEnabled()
+
+    # Switch to Plates Only ("plates") -> face controls disabled, plate controls enabled
+    window.combo_target.setCurrentIndex(2)
+    assert window.combo_target.currentData() == "plates"
+    assert not window.combo_model.isEnabled()
+    assert not window.spin_conf.isEnabled()
+    assert window.spin_plate_conf.isEnabled()
+    window.spin_plate_conf.setValue(0.55)
+
+    captured_cfg = []
+    class MockWorker:
+        def __init__(self, cfg, items):
+            captured_cfg.append(cfg)
+        def start(self): pass
+        item_updated_signal = MagicMock()
+        preview_signal = MagicMock()
+        log_signal = MagicMock()
+        overall_progress_signal = MagicMock()
+        finished_signal = MagicMock()
+
+    monkeypatch.setattr("face_mosaic.gui.app.ProcessingWorker", MockWorker)
+    test_v = tmp_path / "plate_test.mp4"
+    test_v.touch()
+    window._add_to_queue([test_v])
+    window._toggle_processing()
+
+    assert len(captured_cfg) == 1
+    assert captured_cfg[0].target == "plates"
+    assert captured_cfg[0].plate_model.conf_threshold == pytest.approx(0.55)
+
+
+def test_gui_layout_fits_full_hd(qapp):
+    """Ensure MainWindow minimum and default dimensions fit comfortably within Full HD (even at 125-150% DPI scaling)."""
+    window = MainWindow()
+    min_hint = window.minimumSizeHint()
+    assert min_hint.width() <= 1200, f"Window min width too wide for scaled Full HD: {min_hint.width()}"
+    assert min_hint.height() <= 680, f"Window min height too tall for scaled Full HD: {min_hint.height()}"
+    assert window.width() <= 1200
+    assert window.height() <= 720
+
 
 
 

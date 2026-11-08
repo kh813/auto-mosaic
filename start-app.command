@@ -1,6 +1,6 @@
 #!/bin/bash
 # start-app.command
-# Double-clickable macOS launcher for face-mosaic
+# Double-clickable macOS launcher for auto-mosaic
 
 set -e
 
@@ -16,7 +16,7 @@ EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
     echo ""
-    echo "[face-mosaic] Application exited with error code: $EXIT_CODE"
+    echo "[auto-mosaic] Application exited with error code: $EXIT_CODE"
     read -p "Press Enter to close this window..."
 fi
 

@@ -98,7 +98,7 @@ class VideoPreviewWidget(QWidget):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(480, 270)
+        self.setMinimumSize(320, 180)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background-color: #121214; border: 1px solid #2c2c2e; border-radius: 6px;")
         self.pixmap: Optional[QPixmap] = None
@@ -193,7 +193,15 @@ class ProcessingWorker(QThread):
     def run(self):
         try:
             pipeline = ProcessingPipeline(self.config)
-            self.log_signal.emit(f"Initialized pipeline with model: {self.config.model.name} on {pipeline.detector.active_provider}")
+            provider_str = getattr(pipeline, "active_provider", None)
+            if not provider_str or not isinstance(provider_str, str):
+                provider_str = getattr(getattr(pipeline, "detector", None), "active_provider", "CPU")
+            target_label = {
+                "faces": f"Faces Only ({self.config.model.name})",
+                "plates": f"License Plates Only ({self.config.plate_model.name})",
+                "both": f"Faces + Plates ({self.config.model.name} & {self.config.plate_model.name})"
+            }.get(self.config.target, self.config.model.name)
+            self.log_signal.emit(f"Initialized pipeline [{target_label}] on {provider_str}")
 
             while not self._cancel_all:
                 item = None
@@ -322,18 +330,18 @@ class QueueTableWidget(QTableWidget):
 
         drag = QDrag(self)
         mime = QMimeData()
-        mime.setData("application/x-face-mosaic-row", ",".join(map(str, selected_rows)).encode("utf-8"))
+        mime.setData("application/x-auto-mosaic-row", ",".join(map(str, selected_rows)).encode("utf-8"))
         drag.setMimeData(mime)
         drag.exec(Qt.MoveAction)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-face-mosaic-row"):
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-auto-mosaic-row"):
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-face-mosaic-row"):
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-auto-mosaic-row"):
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
@@ -344,8 +352,8 @@ class QueueTableWidget(QTableWidget):
             event.acceptProposedAction()
             return
 
-        if event.mimeData().hasFormat("application/x-face-mosaic-row"):
-            data_bytes = event.mimeData().data("application/x-face-mosaic-row").data()
+        if event.mimeData().hasFormat("application/x-auto-mosaic-row"):
+            data_bytes = event.mimeData().data("application/x-auto-mosaic-row").data()
             try:
                 selected_rows = [int(x) for x in data_bytes.decode("utf-8").split(",") if x]
             except Exception:
@@ -366,8 +374,8 @@ class QueueTableWidget(QTableWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("face-mosaic: Automated Face Blur Tool")
-        self.resize(1140, 740)
+        self.setWindowTitle("auto-mosaic: Automated Face & License Plate Blur Tool")
+        self.resize(1100, 680)
 
         # Application & Window Icon
         icon_path = Path(__file__).parent / "assets" / "icon.png"
@@ -383,7 +391,7 @@ class MainWindow(QMainWindow):
         self.is_stopping: bool = False
         self.last_output_path: Optional[str] = None
 
-        self.settings = QSettings("face-mosaic", "face-mosaic")
+        self.settings = QSettings("auto-mosaic", "auto-mosaic")
         saved_dir = self.settings.value("last_dir", "")
         if saved_dir and os.path.isdir(str(saved_dir)):
             self.last_open_dir = str(Path(saved_dir).resolve())
@@ -419,7 +427,7 @@ class MainWindow(QMainWindow):
         act_disclaimer.triggered.connect(self._show_disclaimer)
         help_menu.addAction(act_disclaimer)
 
-        act_about = QAction("ℹ About face-mosaic", self)
+        act_about = QAction("ℹ About auto-mosaic", self)
         act_about.triggered.connect(self._show_about)
         help_menu.addAction(act_about)
 
@@ -427,37 +435,44 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(10, 8, 10, 8)
+        main_layout.setSpacing(10)
 
         # =========================================================================
-        # LEFT PANEL: Queue List, Parameters, and Execution Controls
+        # LEFT PANEL: 1. Video Processing Queue, Live Mosaic Preview, Execution Log
         # =========================================================================
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(10)
+        left_layout.setSpacing(8)
 
         # 1. Video Queue Group
         queue_group = QGroupBox("1. Video Processing Queue")
         queue_layout = QVBoxLayout(queue_group)
+        queue_layout.setContentsMargins(8, 6, 8, 6)
+        queue_layout.setSpacing(6)
 
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(4)
         self.btn_select_files = QPushButton("+ Add File(s)...")
         self.btn_select_files.clicked.connect(self._select_files)
         self.btn_select_folder = QPushButton("+ Add Folder...")
         self.btn_select_folder.clicked.connect(self._select_folder)
 
-        self.btn_move_up = QPushButton("▲ Up")
+        self.btn_move_up = QPushButton("▲")
+        self.btn_move_up.setFixedWidth(32)
         self.btn_move_up.setToolTip("Move selected video(s) up in queue (Alt+Up)")
         self.btn_move_up.clicked.connect(self._move_selected_up)
         self.btn_move_up.setEnabled(False)
 
-        self.btn_move_down = QPushButton("▼ Down")
+        self.btn_move_down = QPushButton("▼")
+        self.btn_move_down.setFixedWidth(32)
         self.btn_move_down.setToolTip("Move selected video(s) down in queue (Alt+Down)")
         self.btn_move_down.clicked.connect(self._move_selected_down)
         self.btn_move_down.setEnabled(False)
 
-        self.btn_remove_selected = QPushButton("✕ Remove Selected")
+        self.btn_remove_selected = QPushButton("✕ Remove")
+        self.btn_remove_selected.setToolTip("Remove selected video(s) from queue")
         self.btn_remove_selected.clicked.connect(self._remove_selected_files)
         self.btn_clear = QPushButton("Clear All")
         self.btn_clear.clicked.connect(self._clear_queue)
@@ -488,7 +503,7 @@ class MainWindow(QMainWindow):
         self.table_queue.customContextMenuRequested.connect(self._show_table_context_menu)
         self.table_queue.itemDoubleClicked.connect(self._on_table_double_clicked)
         self.table_queue.itemSelectionChanged.connect(self._on_table_selection_changed)
-        self.table_queue.setMinimumHeight(150)
+        self.table_queue.setMinimumHeight(170)
         queue_layout.addWidget(self.table_queue)
 
         status_bar_layout = QHBoxLayout()
@@ -497,320 +512,33 @@ class MainWindow(QMainWindow):
 
         self.lbl_hw_badge = QLabel(f"⚡ {self.hw_profile.reason}")
         self.lbl_hw_badge.setStyleSheet("color: #007AFF; font-size: 11px;")
-        status_bar_layout.addStretch()
-        status_bar_layout.addWidget(self.lbl_hw_badge)
+        self.lbl_hw_badge.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_hw_badge.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_hw_badge.setToolTip(self.hw_profile.reason)
+        status_bar_layout.addWidget(self.lbl_hw_badge, stretch=1)
         queue_layout.addLayout(status_bar_layout)
 
-        left_layout.addWidget(queue_group)
+        left_layout.addWidget(queue_group, stretch=4)
 
-        # 2. Parameters Group
-        param_group = QGroupBox("2. Settings & Parameters")
-        grid = QGridLayout(param_group)
-        grid.setHorizontalSpacing(6)
-
-        def _make_info(tooltip_text: str) -> QLabel:
-            """Return a small ℹ label with a rich tooltip."""
-            lbl = QLabel("ℹ")
-            lbl.setStyleSheet(
-                "color: #007AFF; font-size: 12px; font-weight: bold; padding: 0 2px;"
-            )
-            lbl.setToolTip(tooltip_text)
-            lbl.setFixedWidth(18)
-            lbl.setCursor(Qt.WhatsThisCursor)
-            return lbl
-
-        def _label_with_info(text: str, tooltip: str) -> QHBoxLayout:
-            """Return an HBoxLayout with a text label + ℹ icon."""
-            h = QHBoxLayout()
-            h.setContentsMargins(0, 0, 0, 0)
-            h.setSpacing(2)
-            lbl = QLabel(text)
-            h.addWidget(lbl)
-            h.addWidget(_make_info(tooltip))
-            h.addStretch()
-            return h
-
-        # ---- Row 0: Model / Detection Confidence ----
-        grid.addLayout(_label_with_info(
-            "Model:",
-            "<b>Detection Model</b><br>"
-            "顔検出AIモデルを選択します。<br><br>"
-            "<b>scrfd_10g (Default):</b> 精度と速度のバランスが良い。ほとんどの用途に推奨。<br>"
-            "<b>scrfd_2.5g (Fast):</b> 軽量・高速。PCスペックが低い場合やプレビュー確認向き。<br>"
-            "<b>scrfd_34g (High Acc):</b> 最高精度。遠距離・小顔・斜め顔も検出しやすい。処理は遅い。"
-        ), 0, 0)
-
-        self.combo_model = QComboBox()
-        model_defs = [
-            ("scrfd_10g_bnkps.onnx", "scrfd_10g_bnkps.onnx (Default)"),
-            ("scrfd_2.5g_bnkps.onnx", "scrfd_2.5g_bnkps.onnx (Fast)"),
-            ("scrfd_34g_gnkps.onnx", "scrfd_34g_gnkps.onnx (High Acc)"),
-        ]
-        default_idx = 0
-        for idx, (m_file, m_label) in enumerate(model_defs):
-            if m_file == self.hw_profile.recommended_model:
-                m_label += " ★ Auto-Selected"
-                default_idx = idx
-            self.combo_model.addItem(m_label)
-        self.combo_model.setCurrentIndex(default_idx)
-        grid.addWidget(self.combo_model, 0, 1)
-
-        grid.addLayout(_label_with_info(
-            "Detection Confidence:",
-            "<b>検出信頼度 (Confidence Threshold)</b><br>"
-            "AIが「顔である」と判断するための信頼スコアの閾値（0〜1）。<br><br>"
-            "<b>低い (0.3〜0.4):</b> 見逃しが減る。小さい・遠い顔も拾いやすいが誤検出が増える可能性。<br>"
-            "<b>標準 (0.5):</b> バランス型。ほとんどの用途に適切。<br>"
-            "<b>高い (0.7〜0.9):</b> 明確な顔のみ検出。誤検出を減らしたい場合に使用。"
-        ), 0, 2)
-
-        self.spin_conf = QDoubleSpinBox()
-        self.spin_conf.setRange(0.1, 0.99)
-        self.spin_conf.setSingleStep(0.05)
-        self.spin_conf.setValue(0.50)
-        grid.addWidget(self.spin_conf, 0, 3)
-
-        # ---- Row 1: Face Margin / Blur Strength ----
-        grid.addLayout(_label_with_info(
-            "Face Margin (%):",
-            "<b>顔マージン (Face Margin)</b><br>"
-            "顔の検出バウンディングボックスを周囲に何%拡大してモザイク処理するか。<br><br>"
-            "値が大きいほど顔の周囲も広くぼかされ、輪郭や髪型からの特定を防ぎます。<br><br>"
-            "<b>10〜20%:</b> 顔ギリギリ。<br>"
-            "<b>30〜40%:</b> 標準。<br>"
-            "<b>50%〜:</b> 顔全体・頭部・顎下・髪型まで完全カバー ★推奨<br><br>"
-            "デフォルト: 50%"
-        ), 1, 0)
-
-        self.spin_margin = QSpinBox()
-        self.spin_margin.setRange(0, 100)
-        self.spin_margin.setSingleStep(5)
-        self.spin_margin.setValue(50)
-        grid.addWidget(self.spin_margin, 1, 1)
-
-        self.lbl_strength = QLabel("Blur Strength (odd):")
-        self._lbl_strength_info = _make_info(
-            "<b>ぼかし強度</b><br>"
-            "Gaussian モード時: カーネルサイズ（奇数）。大きいほど強くぼかします。<br>"
-            "　推奨: 51〜99 / デフォルト: 51<br><br>"
-            "Mosaic モード時: ブロックサイズ（ピクセル）。大きいほどモザイクが粗く強力になります。<br>"
-            "　推奨: 24〜36（判別不能）/ デフォルト: 28"
-        )
-        _row1_right = QHBoxLayout()
-        _row1_right.setContentsMargins(0, 0, 0, 0)
-        _row1_right.setSpacing(2)
-        _row1_right.addWidget(self.lbl_strength)
-        _row1_right.addWidget(self._lbl_strength_info)
-        _row1_right.addStretch()
-        grid.addLayout(_row1_right, 1, 2)
-
-        self.spin_strength = QSpinBox()
-        self.spin_strength.setRange(3, 199)
-        self.spin_strength.setSingleStep(2)
-        self.spin_strength.setValue(51)
-        grid.addWidget(self.spin_strength, 1, 3)
-
-        # ---- Row 2: Blur Type / Blur Shape ----
-        grid.addLayout(_label_with_info(
-            "Blur Type:",
-            "<b>ぼかし方式</b><br>"
-            "顔へのモザイク処理方式を選択します。<br><br>"
-            "<b>Gaussian (ガウスぼかし):</b> なめらかなぼかし。自然な仕上がりで目立ちにくい。<br>"
-            "<b>Mosaic (ピクセルモザイク):</b> ブロック状のモザイク。SNS・報道向けの定番スタイル。"
-        ), 2, 0)
-
-        self.combo_blur_type = QComboBox()
-        self.combo_blur_type.addItems(["Gaussian", "Mosaic"])
-        self.combo_blur_type.currentTextChanged.connect(self._on_blur_type_changed)
-        grid.addWidget(self.combo_blur_type, 2, 1)
-
-        grid.addLayout(_label_with_info(
-            "Blur Shape:",
-            "<b>モザイク・ぼかしの形状 (Blur Shape)</b><br>"
-            "顔にかけるモザイクやぼかしの輪郭形状を選択します。<br><br>"
-            "<b>Round (Ellipse) ★推奨:</b><br>"
-            "　顔の輪郭に沿った自然な楕円・丸型モザイク。背景への余計なかぶりを防ぎます。<br><br>"
-            "<b>Rectangle (Square):</b><br>"
-            "　従来の四角形モザイク。"
-        ), 2, 2)
-
-        self.combo_shape = QComboBox()
-        self.combo_shape.addItems(["Round (Ellipse) ★推奨", "Rectangle (Square)"])
-        grid.addWidget(self.combo_shape, 2, 3)
-
-        # ---- Row 3: Pad Backward / Pad Forward ----
-        grid.addLayout(_label_with_info(
-            "Pad Backward (frames):",
-            "<b>後方パディング (Pad Backward)</b><br>"
-            "顔が最初に検出されたフレームより何フレーム前からモザイクを適用するか。<br><br>"
-            "正面から歩いてくる人物は顔検出される前から映り込みます。<br>"
-            "この値を増やすことで、遠方から接近する人物の顔もしっかり先行モザイクできます。<br><br>"
-            "<b>推奨: 8〜16フレーム</b> (30fps の場合 ≈ 0.3〜0.5秒分)<br>"
-            "デフォルト: 12フレーム"
-        ), 3, 0)
-
-        self.spin_pad_back = QSpinBox()
-        self.spin_pad_back.setRange(0, 120)
-        self.spin_pad_back.setValue(12)
-        grid.addWidget(self.spin_pad_back, 3, 1)
-
-        grid.addLayout(_label_with_info(
-            "Pad Forward (frames):",
-            "<b>前方パディング (Pad Forward)</b><br>"
-            "顔が最後に検出されたフレームより何フレーム後までモザイクを継続するか。<br><br>"
-            "歩行中やすれ違い時に顔が横を向いて検出が切れた場合も、<br>"
-            "この値のフレーム数だけモザイクを延長して顔の露出を防ぎます。<br><br>"
-            "<b>推奨: 20〜36フレーム</b> (30fps基準で約0.7〜1.2秒)<br>"
-            "デフォルト: 24フレーム (約0.8秒分)<br><br>"
-            "<i>💡 60fps / 120fps / 240fps などの動画では、FPSに応じて自動的にフレーム数がスケールされるため、実時間でのモザイク継続時間は均一に維持されます。</i>"
-        ), 3, 2)
-
-        self.spin_pad_fwd = QSpinBox()
-        self.spin_pad_fwd.setRange(0, 120)
-        self.spin_pad_fwd.setValue(24)
-        grid.addWidget(self.spin_pad_fwd, 3, 3)
-
-        # ---- Row 4: Output Codec / CRF Quality ----
-        grid.addLayout(_label_with_info(
-            "Output Codec:",
-            "<b>出力コーデック</b><br>"
-            "変換後の動画ファイルの圧縮形式を選択します。<br><br>"
-            "<b>HEVC (H.265) ★推奨:</b> iPhone 4K動画のネイティブ形式。<br>"
-            "　同画質でH.264比 約40〜50%ファイルサイズを削減できます。<br>"
-            "　Windows 10以降・macOS・iOS で再生可能。<br><br>"
-            "<b>H.264:</b> 古い機器・ソフトウェアとの互換性が高い。<br>"
-            "　ファイルサイズは大きいが、どこでも再生できる安定性がある。"
-        ), 4, 0)
-
-        self.combo_codec = QComboBox()
-        self.combo_codec.addItems(["HEVC (H.265)", "H.264"])
-        grid.addWidget(self.combo_codec, 4, 1)
-
-        grid.addLayout(_label_with_info(
-            "CRF Quality:",
-            "<b>CRF (Constant Rate Factor) — 画質設定</b><br>"
-            "数値が小さいほど高画質・大きいファイル。<br>"
-            "数値が大きいほど低画質・小さいファイル。<br><br>"
-            "<b>標準 (CRF 23) ★推奨:</b> 視覚的劣化なし・容量約50%削減<br>"
-            "<b>最高画質 (CRF 18):</b> マスター保存向け（大容量）<br>"
-            "<b>容量優先 (CRF 26):</b> さらに軽量化<br>"
-            "<b>カスタム:</b> 0〜51まで自由指定"
-        ), 4, 2)
-
-        crf_h_layout = QHBoxLayout()
-        crf_h_layout.setContentsMargins(0, 0, 0, 0)
-        crf_h_layout.setSpacing(4)
-        self.combo_crf_preset = QComboBox()
-        self.combo_crf_preset.addItems([
-            "標準 (23 - 推奨)",
-            "最高画質 (18)",
-            "容量優先 (26)",
-            "カスタム"
-        ])
-        self.spin_crf = QSpinBox()
-        self.spin_crf.setRange(0, 51)
-        self.spin_crf.setValue(23)
-        self.spin_crf.setFixedWidth(52)
-
-        def _on_crf_preset_changed(idx: int):
-            presets = [23, 18, 26]
-            if idx < len(presets):
-                self.spin_crf.blockSignals(True)
-                self.spin_crf.setValue(presets[idx])
-                self.spin_crf.blockSignals(False)
-
-        def _on_spin_crf_changed(val: int):
-            preset_map = {23: 0, 18: 1, 26: 2}
-            self.combo_crf_preset.blockSignals(True)
-            self.combo_crf_preset.setCurrentIndex(preset_map.get(val, 3))
-            self.combo_crf_preset.blockSignals(False)
-
-        self.combo_crf_preset.currentIndexChanged.connect(_on_crf_preset_changed)
-        self.spin_crf.valueChanged.connect(_on_spin_crf_changed)
-
-        crf_h_layout.addWidget(self.combo_crf_preset, stretch=1)
-        crf_h_layout.addWidget(self.spin_crf)
-        grid.addLayout(crf_h_layout, 4, 3)
-
-        # ---- Row 5: Bit Depth / Param Suffix ----
-        grid.addLayout(_label_with_info(
-            "Bit Depth:",
-            "<b>ビット深度 (カラー深度)</b><br>"
-            "<b>Auto (自動) ★推奨:</b> 元動画の深度を維持（HEVC時10-bit HDR維持）。<br>"
-            "<b>8-bit:</b> iPhone 10-bit HDR動画でも8-bitに変換し、ファイルサイズ削減と再生互換性を最大化。<br>"
-            "<b>10-bit:</b> 階調重視の10-bitエンコードを強制。"
-        ), 5, 0)
-
-        self.combo_bit_depth = QComboBox()
-        self.combo_bit_depth.addItems(["Auto (自動)", "8-bit (互換性&軽量化)", "10-bit (高階調)"])
-        grid.addWidget(self.combo_bit_depth, 5, 1)
-
-        grid.addLayout(_label_with_info(
-            "Filename Option:",
-            "<b>ファイル名への設定情報付加</b><br>"
-            "チェックを入れると、出力ファイル名に適用したぼかし強度・マージン・CRFを自動埋め込みします。<br>"
-            "例: <code>_blurred_(G51-M50-CRF23).mp4</code>"
-        ), 5, 2)
-
-        self.chk_append_params = QCheckBox("パラメータを付与")
-        self.chk_append_params.setChecked(False)
-        grid.addWidget(self.chk_append_params, 5, 3)
-
-        left_layout.addWidget(param_group)
-
-        # 3. Execution Group
-        exec_group = QGroupBox("3. Execution Controls")
-        exec_layout = QVBoxLayout(exec_group)
-
-        exec_btn_layout = QHBoxLayout()
-        self.btn_start = QPushButton("▶ Start Processing")
-        self.btn_start.setStyleSheet("font-size: 14px; font-weight: bold; height: 38px; background-color: #007AFF; color: white; border-radius: 6px;")
-        self.btn_start.clicked.connect(lambda: self._toggle_processing())
-
-        self.btn_cancel_current = QPushButton("⏭ Skip / Cancel Current File")
-        self.btn_cancel_current.setEnabled(False)
-        self.btn_cancel_current.setStyleSheet("font-size: 12px; font-weight: bold; height: 38px; background-color: #5856D6; color: white; border-radius: 6px;")
-        self.btn_cancel_current.clicked.connect(self._cancel_current_file)
-
-        exec_btn_layout.addWidget(self.btn_start, stretch=3)
-        exec_btn_layout.addWidget(self.btn_cancel_current, stretch=2)
-        exec_layout.addLayout(exec_btn_layout)
-
-        self.lbl_progress_status = QLabel("Idle")
-        exec_layout.addWidget(self.lbl_progress_status)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        exec_layout.addWidget(self.progress_bar)
-
-        left_layout.addWidget(exec_group)
-        main_layout.addWidget(left_panel, stretch=5)
-
-        # =========================================================================
-        # RIGHT PANEL: Live Video Preview & Execution Log
-        # =========================================================================
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
-
-        # Live Preview Group
+        # Live Preview Group (Bottom-Left)
         preview_group = QGroupBox("Live Mosaic Preview")
         preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(8, 6, 8, 6)
+        preview_layout.setSpacing(6)
 
         self.preview_widget = VideoPreviewWidget()
         self.lbl_preview = self.preview_widget  # Alias for backward compatibility with tests
-        preview_layout.addWidget(self.preview_widget)
+        preview_layout.addWidget(self.preview_widget, stretch=1)
 
         # Preview Action Buttons (Open Processed Video / Folder)
         action_layout = QHBoxLayout()
+        action_layout.setSpacing(6)
         self.btn_open_video = QPushButton("▶ Open Processed Video")
         self.btn_open_video.setEnabled(False)
         self.btn_open_video.setToolTip("処理完了した動画を再生します（変換中は無効化されます）")
         self.btn_open_video.setStyleSheet("""
             QPushButton {
-                height: 32px;
+                height: 28px;
                 font-weight: bold;
                 background-color: #34C759;
                 color: #FFFFFF;
@@ -837,7 +565,7 @@ class MainWindow(QMainWindow):
         self.btn_open_folder.setToolTip("処理完了した動画の保存先フォルダを開きます（変換中は無効化されます）")
         self.btn_open_folder.setStyleSheet("""
             QPushButton {
-                height: 32px;
+                height: 28px;
                 font-weight: bold;
                 background-color: #007AFF;
                 color: #FFFFFF;
@@ -863,21 +591,378 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(self.btn_open_folder)
         preview_layout.addLayout(action_layout)
 
-        right_layout.addWidget(preview_group)
+        left_layout.addWidget(preview_group, stretch=5)
 
-        # Execution Log Group
+        main_layout.addWidget(left_panel, stretch=6)
+
+        # =========================================================================
+        # RIGHT PANEL: 2. Settings & Parameters, 3. Execution Controls, Execution Log
+        # =========================================================================
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+
+        # 2. Parameters Group
+        param_group = QGroupBox("2. Settings & Parameters")
+        grid = QGridLayout(param_group)
+        grid.setContentsMargins(10, 8, 10, 8)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+
+        def _make_info(tooltip_text: str) -> QLabel:
+            """Return a small ℹ label with a rich tooltip."""
+            lbl = QLabel("ℹ")
+            lbl.setStyleSheet(
+                "color: #007AFF; font-size: 12px; font-weight: bold; padding: 0 2px;"
+            )
+            lbl.setToolTip(tooltip_text)
+            lbl.setFixedWidth(18)
+            lbl.setCursor(Qt.WhatsThisCursor)
+            return lbl
+
+        def _label_with_info(text: str, tooltip: str) -> QHBoxLayout:
+            """Return an HBoxLayout with a text label + ℹ icon."""
+            h = QHBoxLayout()
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(2)
+            lbl = QLabel(text)
+            h.addWidget(lbl)
+            h.addWidget(_make_info(tooltip))
+            h.addStretch()
+            return h
+
+        def _make_compact_combo(combo: QComboBox, min_chars: int = 6):
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(min_chars)
+
+        # ---- Row 0: Target Mode (spans cols 1..3) ----
+        grid.addLayout(_label_with_info(
+            "Mosaic Target:",
+            "<b>モザイク対象 (PC/Mac負荷最適化)</b><br>"
+            "どの対象を検出してモザイク処理するかを選択します。<br>"
+            "不要なAIモデルを動かさないことで、PC・MacのCPU/GPU/NPU負荷と処理時間を大幅に最適化できます。<br><br>"
+            "<b>Faces Only (顔のみ):</b> 顔検出モデルのみを実行（遊歩道・屋内など車が少ない動画で高速・低負荷）。<br>"
+            "<b>Faces + Plates (顔＋ナンバー両方):</b> 顔と車のナンバープレートの両方を検出・モザイク処理。<br>"
+            "<b>Plates Only (ナンバーのみ):</b> ナンバープレート検出モデルのみを実行（車載動画・駐車場などで高速・低負荷）。"
+        ), 0, 0)
+
+        self.combo_target = QComboBox()
+        self.combo_target.addItem("Faces Only (顔のみ - 低負荷)", "faces")
+        self.combo_target.addItem("Faces + Plates (顔＋ナンバー両方)", "both")
+        self.combo_target.addItem("Plates Only (ナンバーのみ - 低負荷)", "plates")
+        self.combo_target.setCurrentIndex(0)
+        self.combo_target.currentIndexChanged.connect(self._on_target_mode_changed)
+        _make_compact_combo(self.combo_target)
+        grid.addWidget(self.combo_target, 0, 1, 1, 3)
+
+        # ---- Row 1: Face Detection Model (spans cols 1..3) ----
+        grid.addLayout(_label_with_info(
+            "Model:",
+            "<b>Detection Model</b><br>"
+            "顔検出AIモデルを選択します。<br><br>"
+            "<b>scrfd_10g (Default):</b> 精度と速度のバランスが良い。ほとんどの用途に推奨。<br>"
+            "<b>scrfd_2.5g (Fast):</b> 軽量・高速。PCスペックが低い場合やプレビュー確認向き。<br>"
+            "<b>scrfd_34g (High Acc):</b> 最高精度。遠距離・小顔・斜め顔も検出しやすい。処理は遅い。"
+        ), 1, 0)
+
+        self.combo_model = QComboBox()
+        model_defs = [
+            ("scrfd_10g_bnkps.onnx", "scrfd_10g_bnkps.onnx (Default)"),
+            ("scrfd_2.5g_bnkps.onnx", "scrfd_2.5g_bnkps.onnx (Fast)"),
+            ("scrfd_34g_gnkps.onnx", "scrfd_34g_gnkps.onnx (High Acc)"),
+        ]
+        default_idx = 0
+        for idx, (m_file, m_label) in enumerate(model_defs):
+            if m_file == self.hw_profile.recommended_model:
+                m_label += " ★ Auto-Selected"
+                default_idx = idx
+            self.combo_model.addItem(m_label)
+        self.combo_model.setCurrentIndex(default_idx)
+        _make_compact_combo(self.combo_model)
+        grid.addWidget(self.combo_model, 1, 1, 1, 3)
+
+        # ---- Row 2: Detection Confidence / Plate Confidence ----
+        grid.addLayout(_label_with_info(
+            "Face Confidence:",
+            "<b>顔検出信頼度 (Confidence Threshold)</b><br>"
+            "AIが「顔である」と判断するための信頼スコアの閾値（0〜1）。<br><br>"
+            "<b>低い (0.3〜0.4):</b> 見逃しが減る。小さい・遠い顔も拾いやすいが誤検出が増える可能性。<br>"
+            "<b>標準 (0.5):</b> バランス型。ほとんどの用途に適切。<br>"
+            "<b>高い (0.7〜0.9):</b> 明確な顔のみ検出。誤検出を減らしたい場合に使用。"
+        ), 2, 0)
+
+        self.spin_conf = QDoubleSpinBox()
+        self.spin_conf.setRange(0.1, 0.99)
+        self.spin_conf.setSingleStep(0.05)
+        self.spin_conf.setValue(0.50)
+        grid.addWidget(self.spin_conf, 2, 1)
+
+        grid.addLayout(_label_with_info(
+            "Plate Confidence:",
+            "<b>ナンバープレート検出信頼度 (Plate Confidence)</b><br>"
+            "AIが「車のナンバープレートである」と判断する閾値（0〜1）。<br><br>"
+            "<b>低い (0.25〜0.35):</b> 遠方や斜めのナンバーも検出しやすい。<br>"
+            "<b>標準 (0.40):</b> バランス型（推奨デフォルト）。<br>"
+            "<b>高い (0.60〜0.80):</b> 誤検出を抑制し、明確なナンバーのみ検出。"
+        ), 2, 2)
+
+        self.spin_plate_conf = QDoubleSpinBox()
+        self.spin_plate_conf.setRange(0.1, 0.99)
+        self.spin_plate_conf.setSingleStep(0.05)
+        self.spin_plate_conf.setValue(0.40)
+        self.spin_plate_conf.setEnabled(False)  # Disabled when default is "Faces Only"
+        grid.addWidget(self.spin_plate_conf, 2, 3)
+
+        # ---- Row 3: Face Margin / Blur Strength ----
+        grid.addLayout(_label_with_info(
+            "Face Margin (%):",
+            "<b>顔マージン (Face Margin)</b><br>"
+            "顔の検出バウンディングボックスを周囲に何%拡大してモザイク処理するか。<br><br>"
+            "値が大きいほど顔の周囲も広くぼかされ、輪郭や髪型からの特定を防ぎます。<br><br>"
+            "<b>10〜20%:</b> 顔ギリギリ。<br>"
+            "<b>30〜40%:</b> 標準。<br>"
+            "<b>50%〜:</b> 顔全体・頭部・顎下・髪型まで完全カバー ★推奨<br><br>"
+            "デフォルト: 50%"
+        ), 3, 0)
+
+        self.spin_margin = QSpinBox()
+        self.spin_margin.setRange(0, 100)
+        self.spin_margin.setSingleStep(5)
+        self.spin_margin.setValue(50)
+        grid.addWidget(self.spin_margin, 3, 1)
+
+        self.lbl_strength = QLabel("Blur Strength (odd):")
+        self._lbl_strength_info = _make_info(
+            "<b>ぼかし強度</b><br>"
+            "Gaussian モード時: カーネルサイズ（奇数）。大きいほど強くぼかします。<br>"
+            "　推奨: 51〜99 / デフォルト: 51<br><br>"
+            "Mosaic モード時: ブロックサイズ（ピクセル）。大きいほどモザイクが粗く強力になります。<br>"
+            "　推奨: 24〜36（判別不能）/ デフォルト: 28"
+        )
+        _row_strength_right = QHBoxLayout()
+        _row_strength_right.setContentsMargins(0, 0, 0, 0)
+        _row_strength_right.setSpacing(2)
+        _row_strength_right.addWidget(self.lbl_strength)
+        _row_strength_right.addWidget(self._lbl_strength_info)
+        _row_strength_right.addStretch()
+        grid.addLayout(_row_strength_right, 3, 2)
+
+        self.spin_strength = QSpinBox()
+        self.spin_strength.setRange(3, 199)
+        self.spin_strength.setSingleStep(2)
+        self.spin_strength.setValue(51)
+        grid.addWidget(self.spin_strength, 3, 3)
+
+        # ---- Row 4: Blur Type / Blur Shape ----
+        grid.addLayout(_label_with_info(
+            "Blur Type:",
+            "<b>ぼかし方式</b><br>"
+            "顔・ナンバープレートへのモザイク処理方式を選択します。<br><br>"
+            "<b>Gaussian (ガウスぼかし):</b> なめらかなぼかし。自然な仕上がりで目立ちにくい。<br>"
+            "<b>Mosaic (ピクセルモザイク):</b> ブロック状のモザイク。SNS・報道向けの定番スタイル。"
+        ), 4, 0)
+
+        self.combo_blur_type = QComboBox()
+        self.combo_blur_type.addItems(["Gaussian", "Mosaic"])
+        self.combo_blur_type.currentTextChanged.connect(self._on_blur_type_changed)
+        _make_compact_combo(self.combo_blur_type)
+        grid.addWidget(self.combo_blur_type, 4, 1)
+
+        grid.addLayout(_label_with_info(
+            "Blur Shape:",
+            "<b>モザイク・ぼかしの形状 (Blur Shape)</b><br>"
+            "顔にかけるモザイクやぼかしの輪郭形状を選択します（ナンバープレートは常に四隅まで隠れる四角形で描画されます）。<br><br>"
+            "<b>Round (Ellipse) ★推奨:</b><br>"
+            "　顔の輪郭に沿った自然な楕円・丸型モザイク。背景への余計なかぶりを防ぎます。<br><br>"
+            "<b>Rectangle (Square):</b><br>"
+            "　従来の四角形モザイク。"
+        ), 4, 2)
+
+        self.combo_shape = QComboBox()
+        self.combo_shape.addItems(["Round (Ellipse) ★推奨", "Rectangle (Square)"])
+        _make_compact_combo(self.combo_shape)
+        grid.addWidget(self.combo_shape, 4, 3)
+
+        # ---- Row 5: Pad Backward / Pad Forward ----
+        grid.addLayout(_label_with_info(
+            "Pad Backward (f):",
+            "<b>後方パディング (Pad Backward)</b><br>"
+            "顔やナンバープレートが最初に検出されたフレームより何フレーム前からモザイクを適用するか。<br><br>"
+            "正面から歩いてくる人物や接近する車両は検出される前から映り込みます。<br>"
+            "この値を増やすことで、遠方から接近する被写体もしっかり先行モザイクできます。<br><br>"
+            "<b>推奨: 8〜16フレーム</b> (30fps の場合 ≈ 0.3〜0.5秒分)<br>"
+            "デフォルト: 12フレーム"
+        ), 5, 0)
+
+        self.spin_pad_back = QSpinBox()
+        self.spin_pad_back.setRange(0, 120)
+        self.spin_pad_back.setValue(12)
+        grid.addWidget(self.spin_pad_back, 5, 1)
+
+        grid.addLayout(_label_with_info(
+            "Pad Forward (f):",
+            "<b>前方パディング (Pad Forward)</b><br>"
+            "顔やナンバープレートが最後に検出されたフレームより何フレーム後までモザイクを継続するか。<br><br>"
+            "歩行中やすれ違い時に顔や車両が横を向いて検出が切れた場合も、<br>"
+            "この値のフレーム数だけモザイクを延長して露出を防ぎます。<br><br>"
+            "<b>推奨: 20〜36フレーム</b> (30fps基準で約0.7〜1.2秒)<br>"
+            "デフォルト: 24フレーム (約0.8秒分)<br><br>"
+            "<i>💡 60fps / 120fps / 240fps などの動画では、FPSに応じて自動的にフレーム数がスケールされるため、実時間でのモザイク継続時間は均一に維持されます。</i>"
+        ), 5, 2)
+
+        self.spin_pad_fwd = QSpinBox()
+        self.spin_pad_fwd.setRange(0, 120)
+        self.spin_pad_fwd.setValue(24)
+        grid.addWidget(self.spin_pad_fwd, 5, 3)
+
+        # ---- Row 6: Output Codec (spans cols 1..3) ----
+        grid.addLayout(_label_with_info(
+            "Output Codec:",
+            "<b>出力コーデック</b><br>"
+            "変換後の動画ファイルの圧縮形式を選択します。<br><br>"
+            "<b>Auto (元動画と同じ) ★推奨:</b><br>"
+            "　元の動画ファイルと同じコーデック（HEVC または H.264）・コンテナ・色空間で出力します。<br>"
+            "　Windows / Mac / iPad / iPhone すべてで確実に再生できる標準設定です。<br><br>"
+            "<b>HEVC (H.265):</b> iPhone 4K動画のネイティブ形式。<br>"
+            "　H.264動画を約40〜50%小さいファイルサイズに高圧縮したい場合に選択。<br><br>"
+            "<b>H.264:</b> 古い機器・レガシーソフトとの互換性を最優先する場合に選択。"
+        ), 6, 0)
+
+        self.combo_codec = QComboBox()
+        self.combo_codec.addItem("Auto (元動画と同じ) ★推奨", "auto")
+        self.combo_codec.addItem("HEVC (H.265)", "hevc")
+        self.combo_codec.addItem("H.264", "h264")
+        _make_compact_combo(self.combo_codec)
+        grid.addWidget(self.combo_codec, 6, 1, 1, 3)
+
+        # ---- Row 7: CRF Quality (spans cols 1..3) ----
+        grid.addLayout(_label_with_info(
+            "CRF Quality:",
+            "<b>CRF (Constant Rate Factor) — 画質設定</b><br>"
+            "数値が小さいほど高画質・大きいファイル。<br>"
+            "数値が大きいほど低画質・小さいファイル。<br><br>"
+            "<b>標準 (CRF 23) ★推奨:</b> 視覚的劣化なし・容量約50%削減<br>"
+            "<b>最高画質 (CRF 18):</b> マスター保存向け（大容量）<br>"
+            "<b>容量優先 (CRF 26):</b> さらに軽量化<br>"
+            "<b>カスタム:</b> 0〜51まで自由指定"
+        ), 7, 0)
+
+        crf_h_layout = QHBoxLayout()
+        crf_h_layout.setContentsMargins(0, 0, 0, 0)
+        crf_h_layout.setSpacing(6)
+        self.combo_crf_preset = QComboBox()
+        self.combo_crf_preset.addItems([
+            "標準 (23 - 推奨)",
+            "最高画質 (18)",
+            "容量優先 (26)",
+            "カスタム"
+        ])
+        _make_compact_combo(self.combo_crf_preset)
+        self.spin_crf = QSpinBox()
+        self.spin_crf.setRange(0, 51)
+        self.spin_crf.setValue(23)
+        self.spin_crf.setFixedWidth(56)
+
+        def _on_crf_preset_changed(idx: int):
+            presets = [23, 18, 26]
+            if idx < len(presets):
+                self.spin_crf.blockSignals(True)
+                self.spin_crf.setValue(presets[idx])
+                self.spin_crf.blockSignals(False)
+
+        def _on_spin_crf_changed(val: int):
+            preset_map = {23: 0, 18: 1, 26: 2}
+            self.combo_crf_preset.blockSignals(True)
+            self.combo_crf_preset.setCurrentIndex(preset_map.get(val, 3))
+            self.combo_crf_preset.blockSignals(False)
+
+        self.combo_crf_preset.currentIndexChanged.connect(_on_crf_preset_changed)
+        self.spin_crf.valueChanged.connect(_on_spin_crf_changed)
+
+        crf_h_layout.addWidget(self.combo_crf_preset, stretch=1)
+        crf_h_layout.addWidget(self.spin_crf)
+        grid.addLayout(crf_h_layout, 7, 1, 1, 3)
+
+        # ---- Row 8: Bit Depth / Filename Option ----
+        grid.addLayout(_label_with_info(
+            "Bit Depth:",
+            "<b>ビット深度 (カラー深度)</b><br>"
+            "<b>Auto (自動) ★推奨:</b> 元動画の深度を維持（HEVC時10-bit HDR維持）。<br>"
+            "<b>8-bit:</b> iPhone 10-bit HDR動画でも8-bitに変換し、ファイルサイズ削減と再生互換性を最大化。<br>"
+            "<b>10-bit:</b> 階調重視の10-bitエンコードを強制。"
+        ), 8, 0)
+
+        self.combo_bit_depth = QComboBox()
+        self.combo_bit_depth.addItems(["Auto (自動)", "8-bit (互換性&軽量化)", "10-bit (高階調)"])
+        _make_compact_combo(self.combo_bit_depth)
+        grid.addWidget(self.combo_bit_depth, 8, 1)
+
+        grid.addLayout(_label_with_info(
+            "Filename Option:",
+            "<b>ファイル名への設定情報付加</b><br>"
+            "チェックを入れると、出力ファイル名に適用したぼかし強度・マージン・CRFを自動埋め込みします。<br>"
+            "例: <code>_blurred_(G51-M50-CRF23).mp4</code>"
+        ), 8, 2)
+
+        self.chk_append_params = QCheckBox("パラメータを付与")
+        self.chk_append_params.setChecked(False)
+        grid.addWidget(self.chk_append_params, 8, 3)
+
+        right_layout.addWidget(param_group)
+
+        # 3. Execution Group (Right column below settings)
+        exec_group = QGroupBox("3. Execution Controls")
+        exec_layout = QVBoxLayout(exec_group)
+        exec_layout.setContentsMargins(10, 8, 10, 8)
+        exec_layout.setSpacing(6)
+
+        exec_btn_layout = QHBoxLayout()
+        exec_btn_layout.setSpacing(6)
+        self.btn_start = QPushButton("▶ Start Processing")
+        self.btn_start.setStyleSheet("font-size: 14px; font-weight: bold; height: 36px; background-color: #007AFF; color: white; border-radius: 6px;")
+        self.btn_start.clicked.connect(lambda: self._toggle_processing())
+
+        self.btn_cancel_current = QPushButton("⏭ Skip / Cancel Current File")
+        self.btn_cancel_current.setEnabled(False)
+        self.btn_cancel_current.setStyleSheet("font-size: 12px; font-weight: bold; height: 36px; background-color: #5856D6; color: white; border-radius: 6px;")
+        self.btn_cancel_current.clicked.connect(self._cancel_current_file)
+
+        exec_btn_layout.addWidget(self.btn_start, stretch=3)
+        exec_btn_layout.addWidget(self.btn_cancel_current, stretch=2)
+        exec_layout.addLayout(exec_btn_layout)
+
+        self.lbl_progress_status = QLabel("Idle")
+        exec_layout.addWidget(self.lbl_progress_status)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        exec_layout.addWidget(self.progress_bar)
+
+        right_layout.addWidget(exec_group)
+
+        # Execution Log Group (Right column below Execution Controls)
         log_group = QGroupBox("Execution Log")
         log_layout = QVBoxLayout(log_group)
+        log_layout.setContentsMargins(8, 6, 8, 6)
+        log_layout.setSpacing(4)
 
         log_btn_layout = QHBoxLayout()
-        self.btn_disclaimer = QPushButton("⚖ 免責事項 (Disclaimer)")
+        log_btn_layout.setSpacing(4)
+        self.btn_disclaimer = QPushButton("⚖ 免責事項")
+        self.btn_disclaimer.setToolTip("免責事項・利用規約を表示します")
         self.btn_disclaimer.clicked.connect(self._show_disclaimer)
         self.btn_update = QPushButton("🔄 Check Update")
         self.btn_update.setToolTip("GitHubから最新バージョンを確認・更新します")
         self.btn_update.clicked.connect(lambda: self._check_for_updates_ui(manual=True))
-        self.btn_copy_log = QPushButton("📋 Copy Log")
+        self.btn_copy_log = QPushButton("📋 Copy")
+        self.btn_copy_log.setToolTip("実行ログをクリップボードにコピーします")
         self.btn_copy_log.clicked.connect(self._copy_log)
-        self.btn_open_log = QPushButton("📁 Open Log File")
+        self.btn_open_log = QPushButton("📁 Log File")
+        self.btn_open_log.setToolTip("ログファイル (face_mosaic.log) を開きます")
         self.btn_open_log.clicked.connect(self._open_log_file)
         log_btn_layout.addWidget(self.btn_disclaimer)
         log_btn_layout.addWidget(self.btn_update)
@@ -888,18 +973,31 @@ class MainWindow(QMainWindow):
 
         self.txt_log = QTextEdit()
         self.txt_log.setReadOnly(True)
+        self.txt_log.setMinimumHeight(80)
         self.txt_log.append(f"System Check: {self.hw_profile.reason}\nReady for processing.")
         log_layout.addWidget(self.txt_log)
 
         right_layout.addWidget(log_group, stretch=1)
 
         # Subtle footer disclaimer banner
-        lbl_footer_disclaimer = QLabel("⚠️ 本ツールは顔検出・モザイクの自動化補助ツールです。公開前に必ず目視確認を行ってください。(Apache-2.0)")
+        lbl_footer_disclaimer = QLabel("⚠️ 本ツールは顔・ナンバープレート検出モザイクの自動化補助ツールです。公開前に必ず目視確認を行ってください。(Apache-2.0)")
+        lbl_footer_disclaimer.setWordWrap(True)
         lbl_footer_disclaimer.setStyleSheet("color: #8E8E93; font-size: 10px; margin-top: 2px;")
         lbl_footer_disclaimer.setAlignment(Qt.AlignCenter)
         right_layout.addWidget(lbl_footer_disclaimer)
 
-        main_layout.addWidget(right_panel, stretch=6)
+        main_layout.addWidget(right_panel, stretch=5)
+
+    def _on_target_mode_changed(self, idx: int = 0):
+        target_val = self.combo_target.currentData() or "faces"
+        use_faces = target_val in ("faces", "both")
+        use_plates = target_val in ("plates", "both")
+        if hasattr(self, "combo_model"):
+            self.combo_model.setEnabled(use_faces)
+        if hasattr(self, "spin_conf"):
+            self.spin_conf.setEnabled(use_faces)
+        if hasattr(self, "spin_plate_conf"):
+            self.spin_plate_conf.setEnabled(use_plates)
 
     def _on_blur_type_changed(self, text: str):
         if text.lower() == "mosaic":
@@ -1480,9 +1578,11 @@ class MainWindow(QMainWindow):
 
             # Build config
             cfg = AppConfig()
+            cfg.target = self.combo_target.currentData() or "faces"
             model_selection = self.combo_model.currentText().split()[0]
             cfg.model.name = model_selection
             cfg.model.conf_threshold = self.spin_conf.value()
+            cfg.plate_model.conf_threshold = self.spin_plate_conf.value()
 
             cfg.blur.type = self.combo_blur_type.currentText().lower()
             if cfg.blur.type == "mosaic":
@@ -1501,8 +1601,17 @@ class MainWindow(QMainWindow):
             cfg.blur.shape = "ellipse" if ("round" in shape_text or "ellipse" in shape_text) else "rect"
             cfg.filters.illustration_filter.enabled = True
 
-            codec_str = "hevc" if "HEVC" in self.combo_codec.currentText() else "h264"
-            cfg.output.codec = codec_str
+            codec_data = self.combo_codec.currentData()
+            if codec_data in ("auto", "hevc", "h264"):
+                cfg.output.codec = codec_data
+            else:
+                ctext = self.combo_codec.currentText().upper()
+                if "AUTO" in ctext:
+                    cfg.output.codec = "auto"
+                elif "HEVC" in ctext or "265" in ctext:
+                    cfg.output.codec = "hevc"
+                else:
+                    cfg.output.codec = "h264"
             cfg.output.crf = self.spin_crf.value()
 
             bit_depth_text = self.combo_bit_depth.currentText().lower()
@@ -1620,11 +1729,11 @@ class MainWindow(QMainWindow):
     def _show_disclaimer(self):
         title = "利用規約・免責事項 (Disclaimer & License)"
         text = (
-            "<h3>face-mosaic 利用規約・免責事項</h3>"
+            "<h3>auto-mosaic 利用規約・免責事項</h3>"
             "<p><b>【ライセンス】</b><br>"
             "本ソフトウェアは <b>Apache License, Version 2.0</b> に基づき提供されます。</p>"
             "<p><b>【目視による最終確認の義務】</b><br>"
-            "本ツールはAI（コンピュータビジョン）を用いて顔検出およびモザイク／ぼかし処理を補助するツールです。"
+            "本ツールはAI（コンピュータビジョン）を用いて顔・ナンバープレート検出およびモザイク／ぼかし処理を補助するツールです。"
             "カメラアングル、被写体の動き、遮蔽物、極端な照明等の要因により、検出漏れが発生する可能性を技術的に100%排除することはできません。<br><br>"
             "処理後の動画をYouTubeやSNS等の公の場へ公開・共有する前に、<b>必ず利用者の自己責任において全編の目視確認を行い、必要に応じて手動での追加修正を行ってください。</b></p>"
             "<p><b>【保証の否認・責任の制限】</b><br>"
@@ -1635,11 +1744,11 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, title, text)
 
     def _show_about(self):
-        title = "About face-mosaic"
+        title = "About auto-mosaic"
         text = (
-            f"<h3>face-mosaic v{__version__}</h3>"
-            f"<p>街中散歩動画向け オフライン自動顔ぼかし・モザイクツール</p>"
-            f"<p><b>リポジトリ:</b> <a href='https://github.com/kh813/face-mosaic'>https://github.com/kh813/face-mosaic</a></p>"
+            f"<h3>auto-mosaic v{__version__}</h3>"
+            f"<p>街中散歩・車載動画向け オフライン自動モザイクツール（顔・ナンバープレート対応）</p>"
+            f"<p><b>リポジトリ:</b> <a href='https://github.com/kh813/auto-mosaic'>https://github.com/kh813/auto-mosaic</a></p>"
             f"<p><b>動作環境:</b> Python {sys.version.split()[0]} / {self.hw_profile.reason}</p>"
         )
         QMessageBox.about(self, title, text)
@@ -1685,7 +1794,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(
                         self,
                         "最新バージョンです",
-                        f"お使いの face-mosaic は最新バージョン (v{__version__}) です。"
+                        f"お使いの auto-mosaic は最新バージョン (v{__version__}) です。"
                     )
 
         worker.finished_signal.connect(on_finished)
@@ -1699,7 +1808,7 @@ class MainWindow(QMainWindow):
         self.btn_update.setEnabled(False)
 
         progress_dlg = QProgressDialog("アップデートを準備中...", None, 0, 100, self)
-        progress_dlg.setWindowTitle("face-mosaic 自動更新")
+        progress_dlg.setWindowTitle("auto-mosaic 自動更新")
         progress_dlg.setWindowModality(Qt.WindowModal)
         progress_dlg.setAutoClose(False)
         progress_dlg.setValue(5)
@@ -1738,7 +1847,7 @@ class MainWindow(QMainWindow):
                 if reply == QMessageBox.Yes:
                     from PySide6.QtGui import QDesktopServices
                     from PySide6.QtCore import QUrl
-                    QDesktopServices.openUrl(QUrl(info.get("html_url", "https://github.com/kh813/face-mosaic/releases")))
+                    QDesktopServices.openUrl(QUrl(info.get("html_url", "https://github.com/kh813/auto-mosaic/releases")))
 
         worker.progress_signal.connect(on_prog)
         worker.finished_signal.connect(on_finished)
@@ -1751,12 +1860,12 @@ def run_app():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("face_mosaic.gui.app.1.0")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("auto_mosaic.gui.app.1.0")
         except Exception:
             pass
 
     app = QApplication(sys.argv)
-    app.setApplicationName("face-mosaic")
+    app.setApplicationName("auto-mosaic")
 
     icon_path = Path(__file__).parent / "assets" / "icon.png"
     if not icon_path.exists():

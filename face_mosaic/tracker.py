@@ -57,10 +57,11 @@ def compute_track_match_score(pred_box: np.ndarray, det_box: np.ndarray) -> floa
     return iou
 
 class Tracklet:
-    def __init__(self, track_id: int, start_frame: int, detection: FaceDetection, crop: np.ndarray):
+    def __init__(self, track_id: int, start_frame: int, detection: FaceDetection, crop: Optional[np.ndarray]):
         self.track_id = track_id
         self.start_frame = start_frame
         self.last_frame = start_frame
+        self.label: str = getattr(detection, "label", "face")
         
         # Frame index -> Bounding Box [x1, y1, x2, y2]
         self.frames: Dict[int, np.ndarray] = {start_frame: detection.bbox}
@@ -224,6 +225,9 @@ class FaceTracker:
             for t_idx, track in enumerate(self.active_tracks):
                 pred_box = track.predict_bbox(frame_idx)
                 for d_idx, det in enumerate(detections):
+                    det_label = getattr(det, "label", "face")
+                    if det_label != track.label:
+                        continue
                     ious[t_idx, d_idx] = compute_track_match_score(pred_box, det.bbox)
 
             # Greedy matching
@@ -236,8 +240,11 @@ class FaceTracker:
                     ious[t_idx, d_idx] = 0.0
                     continue
 
-                crop = self.extract_crop(frame, detections[d_idx].bbox, orig_shape=orig_shape)
-                self.active_tracks[t_idx].add_detection(frame_idx, detections[d_idx], crop)
+                det = detections[d_idx]
+                det_label = getattr(det, "label", "face")
+                need_crop = (det_label != "plate") or self.filters_config.static_photo_filter.enabled
+                crop = self.extract_crop(frame, det.bbox, orig_shape=orig_shape) if need_crop else None
+                self.active_tracks[t_idx].add_detection(frame_idx, det, crop)
                 matched_tracks.add(t_idx)
                 matched_dets.add(d_idx)
                 ious[t_idx, :] = 0.0
@@ -246,7 +253,9 @@ class FaceTracker:
         # Create new tracks for unmatched detections
         for d_idx, det in enumerate(detections):
             if d_idx not in matched_dets:
-                crop = self.extract_crop(frame, det.bbox, orig_shape=orig_shape)
+                det_label = getattr(det, "label", "face")
+                need_crop = (det_label != "plate") or self.filters_config.static_photo_filter.enabled
+                crop = self.extract_crop(frame, det.bbox, orig_shape=orig_shape) if need_crop else None
                 track = Tracklet(self.next_track_id, frame_idx, det, crop)
                 self.next_track_id += 1
                 self.active_tracks.append(track)
@@ -281,6 +290,11 @@ class FaceTracker:
                     mx1, my1, mx2, my2 = mask
                     if mx1 <= avg_center_x <= mx2 and my1 <= avg_center_y <= my2:
                         return False
+
+        # License plate tracks bypass human face-specific filters (skin color, animal, illustration)
+        if getattr(track, "label", "face") == "plate":
+            track.crops.clear()
+            return True
 
         # Skin color check on sample crops
         if self.filters_config.skin_color_filter.enabled and track.crops:
@@ -354,6 +368,12 @@ class FaceTracker:
 
             min_f = detected_frames[0]
             max_f = detected_frames[-1]
+            is_plate = getattr(track, "label", "face") == "plate"
+
+            def _tag_bbox(b: np.ndarray) -> np.ndarray:
+                if is_plate:
+                    return np.array([b[0], b[1], b[2], b[3], 1.0], dtype=np.float32)
+                return b
 
             # Interpolate inside the track duration
             for f in range(min_f, max_f + 1):
@@ -366,10 +386,10 @@ class FaceTracker:
                         next_f = min(k for k in detected_frames if k > f)
                         alpha = (f - prev_f) / (next_f - prev_f)
                         bbox = (1 - alpha) * track.frames[prev_f] + alpha * track.frames[next_f]
-                    frame_map[f].append(bbox)
+                    frame_map[f].append(_tag_bbox(bbox))
 
             # Apply backward padding (before start)
-            start_bbox = track.frames[min_f]
+            start_bbox = _tag_bbox(track.frames[min_f])
             for pad_i in range(1, self.padding_backward + 1):
                 target_f = min_f - pad_i
                 if 0 <= target_f < total_frames:
@@ -393,6 +413,6 @@ class FaceTracker:
                         min(float(img_w), extrapolated[2] + w * 0.05),
                         min(float(img_h), extrapolated[3] + h * 0.05)
                     ], dtype=np.float32)
-                    frame_map[target_f].append(pad_box)
+                    frame_map[target_f].append(_tag_bbox(pad_box))
 
         return frame_map

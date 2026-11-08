@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup_and_run_mac.sh
-# Automates macOS environment setup and launches face-mosaic GUI / CLI.
+# Automates macOS environment setup and launches auto-mosaic GUI / CLI.
 
 set -e
 
@@ -15,7 +15,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${CYAN}==========================================================${NC}"
-echo -e "${CYAN}        face-mosaic: macOS Auto-Setup & Launcher          ${NC}"
+echo -e "${CYAN}        auto-mosaic: macOS Auto-Setup & Launcher          ${NC}"
 echo -e "${CYAN}==========================================================${NC}"
 
 # 1. Check Python 3 (>= 3.10)
@@ -86,19 +86,20 @@ else
     echo -e "${GREEN}FFmpeg is ready.$(ffmpeg -version 2>&1 | head -n 1)${NC}"
 fi
 
-# 3. Check or Download SCRFD Models
-echo -e "\n${YELLOW}[3/4] Checking Face Detection Models...${NC}"
+# 3. Check or Download SCRFD & License Plate Models
+echo -e "\n${YELLOW}[3/4] Checking AI Detection Models (Face & License Plate)...${NC}"
 MODEL_FILE="$ROOT_DIR/models/scrfd_10g_bnkps.onnx"
-if [ ! -f "$MODEL_FILE" ]; then
-    echo -e "${YELLOW}Downloading SCRFD models (this only happens on first run)...${NC}"
+PLATE_MODEL_FILE="$ROOT_DIR/models/license-plate-finetune-v1n.onnx"
+if [ ! -f "$MODEL_FILE" ] || [ ! -f "$PLATE_MODEL_FILE" ]; then
+    echo -e "${YELLOW}Downloading AI detection models (this only happens on first run)...${NC}"
     "$VENV_PYTHON" "$ROOT_DIR/scripts/download_models.py"
     echo -e "${GREEN}Models successfully downloaded!${NC}"
 else
-    echo -e "${GREEN}Face detection models are ready.${NC}"
+    echo -e "${GREEN}Face & License Plate detection models are ready.${NC}"
 fi
 
 # 4. Launch Application
-echo -e "\n${CYAN}[4/4] Launching face-mosaic...${NC}"
+echo -e "\n${CYAN}[4/4] Launching auto-mosaic...${NC}"
 echo -e "${CYAN}==========================================================${NC}\n"
 
 if [ $# -gt 0 ]; then

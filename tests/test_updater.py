@@ -50,16 +50,16 @@ def test_check_for_updates_newer_release():
         "tag_name": "v0.9.0",
         "name": "Release 0.9.0",
         "body": "Exciting new features",
-        "html_url": "https://github.com/kh813/face-mosaic/releases/tag/v0.9.0",
+        "html_url": "https://github.com/kh813/auto-mosaic/releases/tag/v0.9.0",
         "published_at": "2026-10-11T20:00:00Z",
         "assets": [
             {
-                "name": "face-mosaic-windows.zip",
-                "browser_download_url": "https://example.com/face-mosaic-windows.zip",
+                "name": "auto-mosaic-windows.zip",
+                "browser_download_url": "https://example.com/auto-mosaic-windows.zip",
             },
             {
-                "name": "face-mosaic-macos.zip",
-                "browser_download_url": "https://example.com/face-mosaic-macos.zip",
+                "name": "auto-mosaic-macos.zip",
+                "browser_download_url": "https://example.com/auto-mosaic-macos.zip",
             },
         ],
 
@@ -77,9 +77,9 @@ def test_check_for_updates_newer_release():
         assert info["tag_name"] == "v0.9.0"
         assert info["is_newer"] is True
         expected_asset = (
-            "https://example.com/face-mosaic-windows.zip"
+            "https://example.com/auto-mosaic-windows.zip"
             if sys.platform == "win32"
-            else "https://example.com/face-mosaic-macos.zip"
+            else "https://example.com/auto-mosaic-macos.zip"
         )
         assert info["asset_url"] == expected_asset
 

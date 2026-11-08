@@ -1,5 +1,5 @@
 """
-Folder watcher service for face-mosaic.
+Folder watcher service for auto-mosaic.
 Monitors a directory for newly added video files and automatically executes blurring pipeline.
 """
 

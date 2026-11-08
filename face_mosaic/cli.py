@@ -1,5 +1,5 @@
 """
-Command Line Interface for face-mosaic.
+Command Line Interface for auto-mosaic.
 Handles single file, multiple files, and recursive folder batch processing.
 Supports skip-on-error behavior and outputs summary reports.
 """
@@ -59,7 +59,7 @@ def collect_video_files(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="face-mosaic: Automated offline face blurring/mosaic tool for walk videos"
+        description="auto-mosaic: Automated offline face & license plate blurring/mosaic tool for videos"
     )
     parser.add_argument(
         "inputs",
@@ -79,6 +79,39 @@ def main():
     )
 
 
+    parser.add_argument(
+        "--target", "-t",
+        choices=["faces", "plates", "both"],
+        default=None,
+        help="Detection target mode to optimize PC/Mac load: faces (faces only), plates (license plates only), or both"
+    )
+    parser.add_argument(
+        "--faces-only",
+        action="store_true",
+        help="Shortcut for --target faces (blur human faces only)"
+    )
+    parser.add_argument(
+        "--plates-only",
+        action="store_true",
+        help="Shortcut for --target plates (blur vehicle license plates only)"
+    )
+    parser.add_argument(
+        "--both",
+        action="store_true",
+        help="Shortcut for --target both (blur both faces and license plates)"
+    )
+    parser.add_argument(
+        "--plate-conf",
+        type=float,
+        default=None,
+        help="License plate detection confidence threshold (0.0 - 1.0, default: 0.40)"
+    )
+    parser.add_argument(
+        "--plate-model",
+        type=str,
+        default=None,
+        help="License plate ONNX model name (default: license-plate-finetune-v1n.onnx)"
+    )
     parser.add_argument(
         "--config", "-c",
         type=str,
@@ -123,9 +156,9 @@ def main():
     )
     parser.add_argument(
         "--codec",
-        choices=["hevc", "h264"],
+        choices=["auto", "hevc", "h264"],
         default=None,
-        help="Video encoder codec (hevc or h264)"
+        help="Video encoder codec: auto (match input video format), hevc, or h264"
     )
     parser.add_argument(
         "--crf",
@@ -169,7 +202,7 @@ def main():
     parser.add_argument(
         "--check-update",
         action="store_true",
-        help="Check GitHub for newer versions of face-mosaic"
+        help="Check GitHub for newer versions of auto-mosaic"
     )
     parser.add_argument(
         "--update", "--self-update",
@@ -221,9 +254,23 @@ def main():
     config = AppConfig.load(args.config)
 
     # CLI Overrides
+    if args.target:
+        config.target = args.target
+    elif args.faces_only:
+        config.target = "faces"
+    elif args.plates_only:
+        config.target = "plates"
+    elif args.both:
+        config.target = "both"
+
+    if args.plate_conf is not None:
+        config.plate_model.conf_threshold = args.plate_conf
+    if args.plate_model:
+        config.plate_model.name = args.plate_model
+
     if args.model:
         config.model.name = args.model
-    elif args.config is None:
+    elif args.config is None and config.detect_faces:
         from .hardware import detect_hardware_profile
         hw = detect_hardware_profile()
         config.model.name = hw.recommended_model

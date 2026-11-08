@@ -1,5 +1,5 @@
 """
-Video I/O and ffmpeg process wrapper module for face-mosaic.
+Video I/O and ffmpeg process wrapper module for auto-mosaic.
 Handles reading video frames via ffmpeg pipe (with rotation & color tags),
 extracting audio, querying metadata with ffprobe, and writing processed frames.
 """
@@ -199,6 +199,16 @@ class VideoInfo:
 
         self.width = int(self.video_stream.get("width", 0))
         self.height = int(self.video_stream.get("height", 0))
+        self.codec_name = str(self.video_stream.get("codec_name", "hevc")).lower()
+        self.codec_tag_string = str(self.video_stream.get("codec_tag_string", ""))
+        self.profile = str(self.video_stream.get("profile", ""))
+        self.pix_fmt = str(self.video_stream.get("pix_fmt", "yuv420p"))
+
+        raw_bitrate = self.video_stream.get("bit_rate") or probe_data.get("format", {}).get("bit_rate")
+        try:
+            self.bit_rate: Optional[int] = int(raw_bitrate) if raw_bitrate else None
+        except Exception:
+            self.bit_rate = None
         
         # Frame rate calculation
         r_fps = self.video_stream.get("r_frame_rate", "30/1")
@@ -345,6 +355,15 @@ class VideoReader:
                     break
                 if not ret or frame is None:
                     break
+                # Safeguard if OpenCV backend did not auto-rotate portrait metadata
+                if frame.shape[0] != self.out_height or frame.shape[1] != self.out_width:
+                    if frame.shape[0] == self.out_width and frame.shape[1] == self.out_height:
+                        if self.info.rotation in (90, -270):
+                            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                        elif self.info.rotation in (-90, 270):
+                            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                    if frame.shape[0] != self.out_height or frame.shape[1] != self.out_width:
+                        frame = cv2.resize(frame, (self.out_width, self.out_height), interpolation=cv2.INTER_LINEAR)
                 yield frame
         else:
             while True:
@@ -446,7 +465,7 @@ class VideoWriter:
         width: int,
         height: int,
         fps: float,
-        codec: str = "hevc",
+        codec: str = "auto",
         crf: int = 23,
         preset: str = "medium",
         preserve_color_tags: bool = True,
@@ -459,6 +478,21 @@ class VideoWriter:
         self.height = height
         self.fps = fps
         self.bit_depth = bit_depth
+
+        # Resolve target codec ("auto" matches the original input video's codec)
+        req_codec = (codec or "auto").strip().lower()
+        if req_codec == "auto":
+            src_codec = getattr(input_info, "codec_name", None)
+            src_codec_str = str(src_codec).lower() if isinstance(src_codec, str) else "hevc"
+            if src_codec_str in ("h264", "avc", "avc1"):
+                resolved_codec = "h264"
+            else:
+                resolved_codec = "hevc"
+        elif req_codec in ("h264", "avc", "avc1", "x264"):
+            resolved_codec = "h264"
+        else:
+            resolved_codec = "hevc"
+        self.resolved_codec = resolved_codec
         
         QSV_PRESET_MAP = {
             "ultrafast": "veryfast",
@@ -483,13 +517,18 @@ class VideoWriter:
              - 'nvenc': NVIDIA NVENC
              - 'cpu': libx265 / libx264 software encoder (multi-threaded)
             """
-            is_hevc = codec.lower() in ("hevc", "h265", "x265")
-            input_is_10bit = bool(input_info.color_metadata and input_info.color_metadata.pix_fmt in ("yuv420p10le", "p010le", "p010"))
+            is_hevc = (self.resolved_codec == "hevc")
+            src_pix = ""
+            if input_info.color_metadata and input_info.color_metadata.pix_fmt:
+                src_pix = str(input_info.color_metadata.pix_fmt)
+            elif isinstance(getattr(input_info, "pix_fmt", None), str):
+                src_pix = str(input_info.pix_fmt)
+            input_is_10bit = src_pix in ("yuv420p10le", "p010le", "p010") or "10le" in src_pix
             
             if bit_depth.lower() == "8bit":
                 is_10bit = False
             elif bit_depth.lower() == "10bit":
-                is_10bit = True
+                is_10bit = is_hevc
             else:  # "auto"
                 # Keep 10-bit for HEVC if input was 10-bit; for H.264 default to 8-bit for maximum compatibility
                 is_10bit = input_is_10bit and is_hevc
@@ -498,30 +537,46 @@ class VideoWriter:
                 enc = "hevc_videotoolbox" if is_hevc else "h264_videotoolbox"
                 # VideoToolbox quality: scale 1-100 (65 is sweet spot corresponding to crf 18-20)
                 vt_q = str(max(40, min(90, 85 - (crf - 15) * 2)))
-                if is_10bit and is_hevc:
-                    pix = "p010le"
-                    enc_args = ["-c:v", enc, "-profile:v", "main10", "-q:v", vt_q, "-pix_fmt", pix]
+                if is_hevc:
+                    pix = "p010le" if is_10bit else "nv12"
+                    prof = "main10" if is_10bit else "main"
+                    enc_args = ["-c:v", enc, "-profile:v", prof, "-q:v", vt_q, "-pix_fmt", pix]
                 else:
-                    pix = "nv12"
-                    enc_args = ["-c:v", enc, "-q:v", vt_q, "-pix_fmt", pix]
+                    enc_args = ["-c:v", enc, "-profile:v", "high", "-q:v", vt_q, "-pix_fmt", "nv12"]
             elif hw_mode == "qsv":
                 enc = "hevc_qsv" if is_hevc else "h264_qsv"
                 qsv_p = QSV_PRESET_MAP.get(preset.lower(), "medium")
-                pix = "p010le" if (is_10bit and is_hevc) else "nv12"
-                enc_args = ["-c:v", enc, "-global_quality", str(crf), "-preset", qsv_p, "-pix_fmt", pix]
+                if is_hevc:
+                    pix = "p010le" if is_10bit else "nv12"
+                    prof = "main10" if is_10bit else "main"
+                    enc_args = ["-c:v", enc, "-profile:v", prof, "-global_quality", str(crf), "-preset", qsv_p, "-pix_fmt", pix, "-flags", "+cgop"]
+                else:
+                    enc_args = ["-c:v", enc, "-profile:v", "high", "-global_quality", str(crf), "-preset", qsv_p, "-pix_fmt", "nv12", "-flags", "+cgop"]
             elif hw_mode == "amf":
                 enc = "hevc_amf" if is_hevc else "h264_amf"
-                pix = "p010le" if (is_10bit and is_hevc) else "nv12"
-                enc_args = ["-c:v", enc, "-quality", "quality", "-rc", "cqp", "-qp_p", str(crf), "-qp_i", str(crf), "-pix_fmt", pix]
+                if is_hevc:
+                    pix = "p010le" if is_10bit else "nv12"
+                    prof = "main10" if is_10bit else "main"
+                    enc_args = ["-c:v", enc, "-profile:v", prof, "-quality", "quality", "-rc", "cqp", "-qp_p", str(crf), "-qp_i", str(crf), "-pix_fmt", pix, "-flags", "+cgop"]
+                else:
+                    enc_args = ["-c:v", enc, "-profile:v", "high", "-quality", "quality", "-rc", "cqp", "-qp_p", str(crf), "-qp_i", str(crf), "-pix_fmt", "nv12", "-flags", "+cgop"]
             elif hw_mode == "nvenc":
                 enc = "hevc_nvenc" if is_hevc else "h264_nvenc"
-                pix = "p010le" if (is_10bit and is_hevc) else "nv12"
-                enc_args = ["-c:v", enc, "-preset", "p5", "-cq", str(crf), "-pix_fmt", pix]
+                if is_hevc:
+                    pix = "p010le" if is_10bit else "nv12"
+                    prof = "main10" if is_10bit else "main"
+                    enc_args = ["-c:v", enc, "-profile:v", prof, "-preset", "p5", "-cq", str(crf), "-pix_fmt", pix, "-flags", "+cgop"]
+                else:
+                    enc_args = ["-c:v", enc, "-profile:v", "high", "-preset", "p5", "-cq", str(crf), "-pix_fmt", "nv12", "-flags", "+cgop"]
             else:
                 # CPU software encode: heavily utilize multi-core threads (Ryzen, etc.)
                 enc = "libx265" if is_hevc else "libx264"
-                pix = "yuv420p10le" if (is_10bit and is_hevc) else "yuv420p"
-                enc_args = ["-c:v", enc, "-crf", str(crf), "-preset", preset, "-pix_fmt", pix, "-threads", "0"]
+                if is_hevc:
+                    pix = "yuv420p10le" if is_10bit else "yuv420p"
+                    prof = "main10" if is_10bit else "main"
+                    enc_args = ["-c:v", enc, "-profile:v", prof, "-crf", str(crf), "-preset", preset, "-pix_fmt", pix, "-flags", "+cgop", "-threads", "0"]
+                else:
+                    enc_args = ["-c:v", enc, "-profile:v", "high", "-crf", str(crf), "-preset", preset, "-pix_fmt", "yuv420p", "-flags", "+cgop", "-threads", "0"]
 
             c = [
                 ffmpeg_bin,
@@ -531,8 +586,12 @@ class VideoWriter:
                 "-pix_fmt", "bgr24",
                 "-s", f"{width}x{height}",
                 "-r", f"{fps:.4f}",
-                "-i", "pipe:0"
             ]
+            # Attach color metadata to rawvideo input stream so swscale & MOV/MP4 colr atom preserve original color space
+            if preserve_color_tags and input_info.color_metadata:
+                c.extend(input_info.color_metadata.to_ffmpeg_args())
+            c.extend(["-i", "pipe:0"])
+
             if input_info.has_audio:
                 c.extend(["-i", input_info.filepath, "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "copy"])
             else:
@@ -542,9 +601,12 @@ class VideoWriter:
             if preserve_color_tags and input_info.color_metadata:
                 c.extend(input_info.color_metadata.to_ffmpeg_args())
                 if is_hevc and is_10bit:
-                    c.extend(input_info.color_metadata.to_bsf_args(codec))
-            # Enable FastStart for MP4 / MOV containers for instant seeking & web playback
+                    c.extend(input_info.color_metadata.to_bsf_args(self.resolved_codec))
+            # Enforce Apple QuickTime / iPadOS / iOS & Windows universal FourCC tag (hvc1 / avc1)
+            # Without -tag:v hvc1, Windows encoders (hevc_qsv, libx265, etc.) write 'hev1', which causes
+            # macOS QuickTime and iPad/iPhone to play audio only with a black video screen.
             if Path(self.output_path).suffix.lower() in (".mp4", ".mov", ".m4v"):
+                c.extend(["-tag:v", "hvc1" if is_hevc else "avc1"])
                 c.extend(["-movflags", "+faststart"])
             c.append(self.output_path)
             return c

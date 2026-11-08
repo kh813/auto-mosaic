@@ -46,13 +46,13 @@ Phase 2の内容（OpenVINO Execution Provider経由でのNPU実行、DirectML E
   - `ci.yml`：`main`ブランチへのpush/PR時に実行。macOS上での依存解決・テスト（pytest 63件）実行
   - `release.yml`：タグpush時に実行。`windows-latest`および`macos-latest`でそれぞれOS固有のZIPパッケージを生成し、GitHub Releasesに添付
 - **パッケージ内容の分離（不要ファイルの徹底排除）**：
-  - **Windows版 (`face-mosaic-windows.zip`)**:
+  - **Windows版 (`auto-mosaic-windows.zip`)**:
     - `start-app.bat`（ワンクリック起動・初回進捗表示 / 2回目以降サイレント起動）
     - `scripts/setup_and_run.ps1`, `scripts/run_gui.vbs`, `scripts/download_models.py`, `scripts/benchmark.py`
     - `requirements/requirements-windows.txt`, `requirements/requirements-common.txt`
     - `face_mosaic/`, `configs/`, `assets/`, `LICENSE`, `README.md`
     - *(Mac固有のシェルスクリプトやrequirementsは一切含まない)*
-  - **macOS版 (`face-mosaic-macos.zip`)**:
+  - **macOS版 (`auto-mosaic-macos.zip`)**:
     - `start-app.command`（ダブルクリック起動ランナー、実行権限 `+x` 付与）
     - `scripts/setup_and_run_mac.sh`, `scripts/download_models.py`, `scripts/benchmark.py`
     - `requirements/requirements-mac.txt`, `requirements/requirements-common.txt`
@@ -147,7 +147,9 @@ Mac実装フェーズでの実測を踏まえ、各対策の閾値・要否を�
 
 ### 3.4 出力
 
-- 出力形式：入力と同じコンテナ/コーデック系統を基本としつつ、H.264/H.265を選択可能にする
+- 出力形式：**デフォルトでは入力動画と全く同じコンテナ（`.MOV` / `.mp4` 等）・コーデック（`HEVC` / `H.264`）・ビット深度（`10-bit` / `8-bit`）・色空間タグを維持する（`codec: "auto"`, `bit_depth: "auto"`）**。また、ファイルサイズ削減や互換性変更のために任意で `HEVC (H.265)` / `H.264` やビット深度・CRFを手動指定可能とする。
+- **Mac / iPad / iPhone / Windows クロスプラットフォーム完全再生互換性**：
+  - Windows 環境（`hevc_qsv` / `libx265` / `hevc_nvenc` / `hevc_amf`）で HEVC を `.mov` / `.mp4` に書き出す際、FFmpeg 既定の FourCC タグ `hev1` では macOS QuickTime Player や iPadOS / iOS が映像デコードを拒否し「音声のみ再生・画面が真っ黒」になる問題を防ぐため、HEVC 出力時は常に **`-tag:v hvc1`**（H.264 時は **`-tag:v avc1`**）、明示的プロファイル（`main10` / `main` / `high`）、および Closed GOP（`-flags +cgop`）を付与する。
 - **画質設定（CRF品質制御）**：固定ビットレート指定ではなく**CRF（Constant Rate Factor）ベースの品質指定**を既定とする。
   - **標準プリセット（既定値: CRF 23）**：視覚的な劣化をほぼ感じさせずに、元動画のファイルサイズを約50〜60%削減（容量半分）できる最適なバランス設定。
   - **最高画質プリセット（CRF 18）**：マスター・アーカイブ保存向けの超高画質設定（大容量）。
@@ -251,7 +253,7 @@ AVCLabs Video Blur AIをRyzen環境で実行した際、モザイク処理自体
 ### 5.2 ディレクトリ構成（案）
 
 ```
-face-mosaic/
+auto-mosaic/
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml            # Lint/テスト（push・PR時）
@@ -427,6 +429,8 @@ PySide6（Qt for Python）を用いたデスクトップGUIを実装完了。
 - Phase 3.4（ハードウェア自動検知とマルチベンダー最適化: Apple Silicon / AMD Ryzen / Intel Arc）: **完了**
 - Phase 3.5（丸型モザイク描画・イラスト/アニメ顔自動除外フィルター）: **完了**
 - Phase 3.6（GUI人間工学改善・ボタン視認性/グレーアウト・パラメータ直感配置）: **完了**
+- Phase 3.7（動画エンコード最適化・CRF 23標準化・8-bit出力制御・FastStart・パラメータ付与）: **完了**
+- Phase 3.8（車のナンバープレート自動モザイク＆処理対象選択によるPC/Mac負荷最適化）: **完了**
 
 ---
 
@@ -568,5 +572,35 @@ CPU、GPU、NPU アーキテクチャおよび RAM 容量を起動時に自動�
 | **Row 2** | **Blur Type** (Gaussian / Mosaic) | **Blur Shape** (Round / Rect) | ぼかしの描画方式および輪郭形状の指定 |
 | **Row 3** | **Pad Backward** (先行フレーム) | **Pad Forward** (延長フレーム) | 時間方向のトラッキング補間設定 |
 | **Row 4** | **Output Codec** (HEVC / H.264) | **CRF Quality** (動画画質) | 出力ファイルの圧縮形式およびエンコード品質 |
+
+---
+
+## 14. Phase 3.8 詳細仕様：車のナンバープレート自動モザイク＆処理対象選択（PC/Mac負荷最適化）
+
+### 14.1 背景・目的
+街歩き動画や車載・道路沿いの撮影動画では、歩行者の顔と同様に自動車・バイクのナンバープレート（車両番号標）のプライバシー保護が求められる。
+一方で、常に顔検出とナンバープレート検出の両方のAIモデルを実行すると、PCやMacのCPU/GPU/NPU負荷が約2倍になるため、用途に応じて**「顔のみ」「ナンバープレートのみ」「顔＋ナンバープレート両方」**をユーザーが選択できる仕組みを導入し、ハードウェア負荷を最適化する。
+
+### 14.2 処理対象モード（Target Mode）と負荷最適化
+- **設定パラメータ (`target`)**:
+  - `faces`: **顔モザイクのみ実行**。`SCRFDDetector` のみをロード・推論し、`LicensePlateDetector` はメモリにロードせず推論も一切行わない（PC/Mac負荷最小）。
+  - `plates`: **ナンバープレートモザイクのみ実行**。`LicensePlateDetector` のみをロード・推論し、`SCRFDDetector` はロード・実行しない（車載動画や顔が映らない動画で高速・低負荷）。
+  - `both`: **顔＋ナンバープレート両方を実行**。Pass 1 の 640×360 スケールダウンデコードストリームを1回だけ読み込み、同一フレームに対して顔検出とナンバープレート検出を実行する（デコード負荷の二重化を防止）。
+
+### 14.3 ナンバープレート検出エンジン (`face_mosaic/plate_detector.py`)
+1. **採用モデル**:
+   - `license-plate-finetune-v1n.onnx`（YOLOv11n ベースのナンバープレート検出 ONNX モデル、約 10.4MB）。
+   - `scripts/download_models.py` で自動取得可能とし、未取得時にプレート検出が指定された場合はオンデマンド自動ダウンロードにも対応。
+2. **マルチベンダー・ハードウェアアクセラレーション**:
+   - `SCRFDDetector` と同じく、Intel OpenVINO (`MULTI:GPU,NPU` / `GPU` / `NPU`)、Apple Silicon CoreML (`CoreMLExecutionProvider`)、Windows DirectML (`DmlExecutionProvider`)、NVIDIA CUDA、マルチスレッド CPU (`CPUExecutionProvider`) を自動選択。
+3. **トラッキング・前後パディングと誤検知フィルタ制御**:
+   - 検出オブジェクト `FaceDetection` に `label` 属性（`"face"` または `"plate"`）を保持。
+   - `FaceTracker` 内で車両の移動に追従する IoU＋速度予測トラッキングおよび前後フレームパディング（`padding_backward` / `padding_forward`）をナンバープレートにも適用。
+   - ナンバープレートのトラック（`label == "plate"`）は、人間顔用の誤検知フィルタ（YCbCr肌色フィルタ、動物分類器、イラスト平坦度フィルタ）を自動的にバイパスし、クロップ画像の保持も省略することでメモリとCPU負荷を節約しつつ、プレートが除外されるのを防止。
+4. **プレート専用の矩形モザイク描画 (`FaceBlurrer`)**:
+   - 顔は輪郭に合わせた楕円（`ellipse`、既定マージン 50%）で描画するのに対し、ナンバープレートは四角形であるため、プレートの四隅の数字まで確実に隠れるよう矩形（`rect`、既定マージン 15%）でモザイク／ガウスぼかしを適用する。
+5. **ライブプレビューの視覚的区別**:
+   - Pass 1 プレビュー画面において、顔検出は緑枠（Green）、ナンバープレート検出はオレンジ/アンバー枠（`LP 0.85`）で色分け描画し、リアルタイムに判別可能とする。
+
 
 

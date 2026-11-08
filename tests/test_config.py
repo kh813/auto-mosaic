@@ -6,12 +6,18 @@ from face_mosaic.config import AppConfig
 
 def test_default_config():
     config = AppConfig()
+    assert config.target == "faces"
+    assert config.detect_faces is True
+    assert config.detect_plates is False
     assert config.model.name == "scrfd_10g_bnkps.onnx"
+    assert config.plate_model.name == "license-plate-finetune-v1n.onnx"
+    assert config.plate_model.conf_threshold == pytest.approx(0.40)
+    assert config.plate_model.shape == "rect"
     assert config.blur.type == "gaussian"
     assert config.tracking.padding_backward == 12
     assert config.tracking.padding_forward == 24
     assert config.tracking.max_missing_frames == 16
-    assert config.output.codec == "hevc"
+    assert config.output.codec == "auto"
     assert config.output.crf == 23
     assert config.output.bit_depth == "auto"
     assert config.output.append_params_to_filename is False

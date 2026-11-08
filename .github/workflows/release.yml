@@ -20,38 +20,38 @@ jobs:
       - name: Stage Windows distribution files
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path staging/face-mosaic -Force | Out-Null
-          Copy-Item start-app.bat, LICENSE, README.md staging/face-mosaic/
-          Copy-Item -Recurse face_mosaic staging/face-mosaic/
-          Copy-Item -Recurse configs staging/face-mosaic/
-          if (Test-Path assets) { Copy-Item -Recurse assets staging/face-mosaic/ }
-          New-Item -ItemType Directory -Path staging/face-mosaic/scripts -Force | Out-Null
-          Copy-Item scripts/setup_and_run.ps1, scripts/run_gui.vbs, scripts/download_models.py, scripts/benchmark.py staging/face-mosaic/scripts/
-          New-Item -ItemType Directory -Path staging/face-mosaic/requirements -Force | Out-Null
-          Copy-Item requirements/requirements-windows.txt, requirements/requirements-common.txt staging/face-mosaic/requirements/
+          New-Item -ItemType Directory -Path staging/auto-mosaic -Force | Out-Null
+          Copy-Item start-app.bat, LICENSE, README.md staging/auto-mosaic/
+          Copy-Item -Recurse face_mosaic staging/auto-mosaic/
+          Copy-Item -Recurse configs staging/auto-mosaic/
+          if (Test-Path assets) { Copy-Item -Recurse assets staging/auto-mosaic/ }
+          New-Item -ItemType Directory -Path staging/auto-mosaic/scripts -Force | Out-Null
+          Copy-Item scripts/setup_and_run.ps1, scripts/run_gui.vbs, scripts/download_models.py, scripts/benchmark.py staging/auto-mosaic/scripts/
+          New-Item -ItemType Directory -Path staging/auto-mosaic/requirements -Force | Out-Null
+          Copy-Item requirements/requirements-windows.txt, requirements/requirements-common.txt staging/auto-mosaic/requirements/
           
           # Clean temporary python cache files if any
-          Get-ChildItem -Path staging/face-mosaic -Filter "__pycache__" -Recurse -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          Get-ChildItem -Path staging/face-mosaic -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path staging/auto-mosaic -Filter "__pycache__" -Recurse -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path staging/auto-mosaic -Filter "*.pyc" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
 
       - name: Create Windows ZIP archive
         shell: pwsh
         run: |
-          Compress-Archive -Path staging/face-mosaic -DestinationPath face-mosaic-windows.zip -Force
+          Compress-Archive -Path staging/auto-mosaic -DestinationPath auto-mosaic-windows.zip -Force
 
       - name: Upload Release Asset (Windows)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: face-mosaic-windows.zip
+          files: auto-mosaic-windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows Artifact (Workflow Run)
         uses: actions/upload-artifact@v4
         with:
-          name: face-mosaic-windows
-          path: face-mosaic-windows.zip
+          name: auto-mosaic-windows
+          path: auto-mosaic-windows.zip
 
   package-macos:
     name: Package macOS Release (ZIP)
@@ -62,39 +62,39 @@ jobs:
 
       - name: Stage macOS distribution files
         run: |
-          mkdir -p staging/face-mosaic
-          cp start-app.command LICENSE README.md staging/face-mosaic/
-          cp -r face_mosaic staging/face-mosaic/
-          cp -r configs staging/face-mosaic/
-          if [ -d assets ]; then cp -r assets staging/face-mosaic/; fi
-          mkdir -p staging/face-mosaic/scripts
-          cp scripts/setup_and_run_mac.sh scripts/download_models.py scripts/benchmark.py staging/face-mosaic/scripts/
-          mkdir -p staging/face-mosaic/requirements
-          cp requirements/requirements-mac.txt requirements/requirements-common.txt staging/face-mosaic/requirements/
+          mkdir -p staging/auto-mosaic
+          cp start-app.command LICENSE README.md staging/auto-mosaic/
+          cp -r face_mosaic staging/auto-mosaic/
+          cp -r configs staging/auto-mosaic/
+          if [ -d assets ]; then cp -r assets staging/auto-mosaic/; fi
+          mkdir -p staging/auto-mosaic/scripts
+          cp scripts/setup_and_run_mac.sh scripts/download_models.py scripts/benchmark.py staging/auto-mosaic/scripts/
+          mkdir -p staging/auto-mosaic/requirements
+          cp requirements/requirements-mac.txt requirements/requirements-common.txt staging/auto-mosaic/requirements/
           
           # Clean temporary python cache files if any
-          find staging/face-mosaic -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-          find staging/face-mosaic -type f -name "*.pyc" -delete 2>/dev/null || true
+          find staging/auto-mosaic -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find staging/auto-mosaic -type f -name "*.pyc" -delete 2>/dev/null || true
           
           # Set POSIX execute permissions so unzipping on macOS keeps .command executable
-          chmod +x staging/face-mosaic/start-app.command
-          chmod +x staging/face-mosaic/scripts/*.sh
+          chmod +x staging/auto-mosaic/start-app.command
+          chmod +x staging/auto-mosaic/scripts/*.sh
 
       - name: Create macOS ZIP archive
         run: |
           cd staging
-          zip -r -y ../face-mosaic-macos.zip face-mosaic
+          zip -r -y ../auto-mosaic-macos.zip auto-mosaic
 
       - name: Upload Release Asset (macOS)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: face-mosaic-macos.zip
+          files: auto-mosaic-macos.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload macOS Artifact (Workflow Run)
         uses: actions/upload-artifact@v4
         with:
-          name: face-mosaic-macos
-          path: face-mosaic-macos.zip
+          name: auto-mosaic-macos
+          path: auto-mosaic-macos.zip

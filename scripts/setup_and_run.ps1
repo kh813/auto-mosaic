@@ -1,5 +1,5 @@
-# setup_and_run.ps1
-# Automates Windows environment setup and launches face-mosaic GUI / CLI.
+﻿# setup_and_run.ps1
+# Automates Windows environment setup and launches auto-mosaic GUI / CLI.
 
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -14,7 +14,7 @@ Set-Location $rootDir
 
 try {
     Write-Host "==========================================================" -ForegroundColor Cyan
-    Write-Host "       face-mosaic: Windows Auto-Setup & Launcher         " -ForegroundColor Cyan
+    Write-Host "       auto-mosaic: Windows Auto-Setup & Launcher         " -ForegroundColor Cyan
     Write-Host "==========================================================" -ForegroundColor Cyan
 
     # 1. Check or Setup Python & venv
@@ -158,21 +158,22 @@ if (Test-Path $binDir) {
     }
 }
 
-# 3. Check or Download SCRFD Models
-Write-Host "`n[3/4] Checking Face Detection Models..." -ForegroundColor Yellow
+# 3. Check or Download SCRFD & License Plate Models
+Write-Host "`n[3/4] Checking AI Detection Models (Face & License Plate)..." -ForegroundColor Yellow
 $modelsDir = Join-Path $rootDir "models"
 $defaultModel = Join-Path $modelsDir "scrfd_10g_bnkps.onnx"
+$plateModel = Join-Path $modelsDir "license-plate-finetune-v1n.onnx"
 
-if (-not (Test-Path $defaultModel)) {
-    Write-Host "Downloading SCRFD models (this only happens on first run)..." -ForegroundColor Yellow
+if (-not (Test-Path $defaultModel) -or -not (Test-Path $plateModel)) {
+    Write-Host "Downloading AI detection models (this only happens on first run)..." -ForegroundColor Yellow
     & $venvPython "$rootDir\scripts\download_models.py"
     Write-Host "Models successfully downloaded!" -ForegroundColor Green
 } else {
-    Write-Host "Face detection models are ready." -ForegroundColor Green
+    Write-Host "Face & License Plate detection models are ready." -ForegroundColor Green
 }
 
 # 4. Launch Application
-Write-Host "`n[4/4] Launching face-mosaic..." -ForegroundColor Cyan
+Write-Host "`n[4/4] Launching auto-mosaic..." -ForegroundColor Cyan
 Write-Host "==========================================================`n" -ForegroundColor Cyan
 
 if ($AppArgs -and $AppArgs.Count -gt 0) {
@@ -190,7 +191,7 @@ if ($AppArgs -and $AppArgs.Count -gt 0) {
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show(
             "起動時または処理中にエラーが発生しました:`n`n$errMsg",
-            "face-mosaic エラー",
+            "auto-mosaic エラー",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
         ) | Out-Null

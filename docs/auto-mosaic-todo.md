@@ -1,11 +1,11 @@
-# face-mosaic 開発TODO
+# auto-mosaic 開発TODO
 
-仕様書（`face-mozaic-specs.md`）に対応したタスクリスト。Phase 1（Mac実装）→ Phase 2（Windows / NPU対応）→ Phase 3（GUI化）まで全完了。
+仕様書（`auto-mosaic-specs.md`）に対応したタスクリスト。Phase 1（Mac実装）→ Phase 2（Windows / NPU対応）→ Phase 3（GUI化）まで全完了。
 
 ## 事前確認（実装着手前）
 
 - [x] AVCLabs Video Blur AIの現行設定値を確認（デフォルト値を反映）
-- [x] アプリ名を最終決定（`face-mosaic`）
+- [x] アプリ名を最終決定（`auto-mosaic`）
 - [x] Gitリポジトリを初期化・準備
 
 ## Phase 1: Mac向け実装
@@ -64,7 +64,7 @@
 - [x] Intel Core Ultra NPU / DirectML GPU の自動プロバイダ識別ログ出力
 - [x] Windows向け ffmpeg 導入手順（winget / choco）の README 記載
 - [x] `.github/workflows/release.yml` に `windows-latest` マトリックスを追加し、Windows用自動ビルド (.zip) を設定
-- [x] 仕様書（`face-mozaic-specs.md`）へ Phase 2 実装完了内容を追記
+- [x] 仕様書（`auto-mosaic-specs.md`）へ Phase 2 実装完了内容を追記
 
 ## Phase 3: GUI化
 
@@ -116,8 +116,8 @@
 - [x] Windows 向け起動バッチのリネームと整理（`start-app.bat` 新設・一本化、初回進捗表示 / 2回目以降サイレント起動、旧 `run.bat` 廃止）
 - [x] macOS 向けワンクリックランナーの実装（`start-app.command` および `scripts/setup_and_run_mac.sh`、Python3/venv/ffmpeg自動検証、モデルダウンロードからGUI起動まで自動化）
 - [x] GitHub Actions リリースワークフロー（`.github/workflows/release.yml`）の刷新
-  - Windows用ジョブ（`package-windows`）：Windows専用ファイルのみをステージングして `face-mosaic-windows.zip` 生成
-  - macOS用ジョブ（`package-macos`）：macOS専用ファイルのみをステージング、`chmod +x` で実行権限を保持したまま `face-mosaic-macos.zip` 生成
+  - Windows用ジョブ（`package-windows`）：Windows専用ファイルのみをステージングして `auto-mosaic-windows.zip` 生成
+  - macOS用ジョブ（`package-macos`）：macOS専用ファイルのみをステージング、`chmod +x` で実行権限を保持したまま `auto-mosaic-macos.zip` 生成
   - タグpush時の GitHub Releases 自動アタッチおよびワークフロー成果物アップロード
 - [x] macOS Gatekeeper 対策とドキュメント整備（Finder「右クリック→開く」および `xattr` 解除手順を明記）
 - [x] 仕様書・TODO・README の完全同期更新
@@ -152,7 +152,7 @@
   - CLI: `--shape {ellipse,rect}` および `--no-illustration-filter` オプション追加
   - GUI: パラメータ設定に「Blur Shape（Round (Ellipse) ★推奨 / Rectangle (Square)）」選択コンボボックス追加
 - [x] 単体テスト追加と全件パス（`tests/test_illustration_and_round_blur.py`、全74件テスト通過）
-- [x] ドキュメント同期（`README.md`, `docs/face-mozaic-specs.md`, `docs/face-mozaic-todo.md`）
+- [x] ドキュメント同期（`README.md`, `docs/auto-mosaic-specs.md`, `docs/auto-mosaic-todo.md`）
 
 ## Phase 3.6: GUI 視認性・人間工学改善（ボタン視認性・グレーアウト＆パラメータ直感配置）
 
@@ -171,7 +171,7 @@
   - Row 4: `Output Codec` & `CRF Quality`（出力コーデック & 画質）
 - [x] 旧起動バッチ `run.bat` の完全廃止と `start-app.bat` への一本化
 - [x] 単体テストの追加と全75件パス（`tests/test_gui.py`）
-- [x] ドキュメント同期（`README.md`, `docs/face-mozaic-specs.md`, `docs/face-mozaic-todo.md`）
+- [x] ドキュメント同期（`README.md`, `docs/auto-mosaic-specs.md`, `docs/auto-mosaic-todo.md`）
 
 ## Phase 3.7: 動画エンコード最適化・ファイルサイズ削減＆互換性向上（CRF 23標準化・8-bit出力・FastStart・パラメータ埋め込み）
 
@@ -186,8 +186,32 @@
   - 動画ヘッダー（moov atom）を先頭配置し、大容量4K動画の即時再生・シーク速度を向上
 - [x] 出力ファイル名へのパラメータ埋め込みオプション (`append_params_to_filename`)
   - 有効時、ファイル名末尾にモザイク設定等を自動付与（例: `IMG_2382_blurred_(G51-M50-CRF23).mp4`）
-- [x] ドキュメント同期（`README.md`, `docs/face-mozaic-specs.md`, `docs/face-mozaic-todo.md`, `configs/config.default.yaml`）
+- [x] ドキュメント同期（`README.md`, `docs/auto-mosaic-specs.md`, `docs/auto-mosaic-todo.md`, `configs/config.default.yaml`）
 - [x] 単体テストの追加・更新と全件パス
+
+## Phase 3.8: 車のナンバープレート自動モザイク対応 ＆ 処理対象選択（PC/Mac負荷最適化）
+
+- [x] 現状の実装確認と仕様書・実装計画・TODOリストの策定
+- [x] `scripts/download_models.py` およびセットアップスクリプトへのナンバープレート検出モデル (`license-plate-finetune-v1n.onnx`) 追加
+- [x] `face_mosaic/config.py` および `configs/config.default.yaml` の拡張
+  - `target` モード (`faces` / `plates` / `both`) の追加
+  - `PlateModelConfig`（モデル名、信頼度閾値 `0.40`、NMS閾値、最小サイズ、マージン `15%`、形状 `rect`）の追加
+- [x] ナンバープレート検出器 (`face_mosaic/plate_detector.py`) の実装
+  - YOLOv11n ONNX 推論（OpenVINO / CoreML / DirectML / CUDA / CPU マルチスレッド対応）
+  - `FaceDetection` への `label`（`"face"` / `"plate"`）属性追加
+- [x] トラッカー (`face_mosaic/tracker.py`)・ブラー (`face_mosaic/blur.py`)・チェックポイント (`face_mosaic/checkpoint.py`)・パイプライン (`face_mosaic/pipeline.py`) の統合
+  - `target` に応じた選択的モデルロード（不要なモデルはロード・推論しない省負荷設計）
+  - プレートトラックに対する顔専用フィルタ（肌色・動物・イラスト）バイパスとメモリ節約
+  - プレート領域への矩形（`rect`）モザイク適用と個別マージン制御
+  - Pass 1 ライブプレビューでの顔（緑枠）とナンバープレート（オレンジ枠 `LP`）の色分け表示
+  - チェックポイント `state.json` への `target` 記録とレジューム整合性対応
+- [x] CLI (`face_mosaic/cli.py`) および GUI (`face_mosaic/gui/app.py`) への統合
+  - CLI: `--target {faces,plates,both}`, `--faces-only`, `--plates-only`, `--both`, `--plate-conf`, `--plate-model` オプション追加
+  - GUI: 設定パネルに「Mosaic Target (モザイク対象)」選択コンボボックスと「Plate Confidence」スピンボックスを追加（選択に応じたUI連動有効/無効化）
+- [x] 単体・結合・GUIテストの追加（`tests/test_plate_detector.py` 等）および全110件テスト通過確認
+- [x] `README.md`・仕様書・TODOの完了更新
+- [x] アプリケーション名の `auto-mosaic` への統一（ドキュメント名 `docs/auto-mosaic-specs.md`・`docs/auto-mosaic-todo.md`、GitHub Releases ZIP名、自動アップデータ、GUIタイトル・表示名、CLIヘルプ、起動スクリプト全般）
+- [x] Windows出力動画の Mac / iPad 再生互換性修正＆元動画フォーマット自動維持（`codec: "auto"` 既定化、`-tag:v hvc1` / `avc1` 強制、明示的 `-profile:v` ＆ Closed GOP `-flags +cgop`、入出力カラースペース完全継承）
 
 ## バックログ（優先度未定・実運用次第で検討）
 

@@ -1,5 +1,5 @@
 """
-Hardware diagnostic and optimal model auto-selection module for face-mosaic.
+Hardware diagnostic and optimal model auto-selection module for auto-mosaic.
 Detects CPU architecture, total RAM, and available GPU/NPU acceleration providers
 (DirectML, CoreML, CUDA) to choose the best SCRFD model.
 """

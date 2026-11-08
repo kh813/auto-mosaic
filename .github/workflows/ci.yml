@@ -32,7 +32,7 @@ jobs:
 
       - name: Download models
         run: |
-          python scripts/download_models.py scrfd_2.5g_bnkps.onnx scrfd_10g_bnkps.onnx
+          python scripts/download_models.py scrfd_2.5g_bnkps.onnx scrfd_10g_bnkps.onnx license-plate-finetune-v1n.onnx
 
 
       - name: Run pytest

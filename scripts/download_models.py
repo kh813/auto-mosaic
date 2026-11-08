@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Model download script for face-mosaic.
-Downloads SCRFD ONNX face detection models.
+Model download script for auto-mosaic.
+Downloads SCRFD ONNX face detection models and YOLOv11n ONNX license plate detection model.
 Works identically on macOS and Windows.
 """
 
@@ -28,7 +28,13 @@ MODELS = {
         "fallback_url": None,
         "description": "SCRFD 34G high-accuracy model with keypoints",
         "expected_min_size": 25_000_000,
-    }
+    },
+    "license-plate-finetune-v1n.onnx": {
+        "url": "https://huggingface.co/morsetechlab/yolov11-license-plate-detection/resolve/main/license-plate-finetune-v1n.onnx",
+        "fallback_url": "https://huggingface.co/wesleyerick/brazilian-license-plate-detector-yolov11-onnx/resolve/main/best.onnx",
+        "description": "YOLOv11n License Plate Detection ONNX model (Fast & Accurate)",
+        "expected_min_size": 8_000_000,
+    },
 }
 
 def download_file(url: str, target_path: Path, fallback_url: str = None, min_size: int = 1_000_000) -> bool:

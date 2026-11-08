@@ -1,5 +1,5 @@
 """
-Processing pipeline orchestrator for face-mosaic.
+Processing pipeline orchestrator for auto-mosaic.
 Performs 2-pass processing:
 Pass 1: Detect and track faces across all frames to establish tracklets and temporal bounds.
 Pass 2: Render blur/mosaic with forward/backward padding and pipe directly to ffmpeg encoder.
@@ -15,6 +15,7 @@ import cv2
 from .config import AppConfig
 from .io_utils import probe_video, VideoReader, VideoWriter, PrefetchedVideoReader, build_output_path
 from .detector import SCRFDDetector
+from .plate_detector import LicensePlateDetector
 from .tracker import FaceTracker
 from .blur import FaceBlurrer
 from .color import compute_color_difference
@@ -24,32 +25,73 @@ class ProcessingPipeline:
     def __init__(self, config: AppConfig, model_dir: Optional[str] = None):
         self.config = config
         
-        # Resolve model path
+        # Resolve model directory
         if model_dir:
             base_model_dir = Path(model_dir)
         else:
             base_model_dir = Path(__file__).resolve().parent.parent / "models"
-        self.model_path = base_model_dir / config.model.name
 
-        if not self.model_path.exists():
-            # Fallback to any available SCRFD model in base_model_dir if present
-            candidates = sorted(list(base_model_dir.glob("scrfd_*.onnx")))
-            if candidates:
-                self.model_path = candidates[0]
-                print(f"Warning: {config.model.name} not found. Falling back to: {self.model_path.name}")
-            else:
+        self.detector: Optional[SCRFDDetector] = None
+        self.plate_detector: Optional[LicensePlateDetector] = None
+        self.model_path = base_model_dir / config.model.name
+        self.plate_model_path = base_model_dir / config.plate_model.name
+
+        # Selective Model Loading: Only load face detector if target includes faces
+        if self.config.detect_faces:
+            if not self.model_path.exists():
+                candidates = sorted(list(base_model_dir.glob("scrfd_*.onnx")))
+                if candidates:
+                    self.model_path = candidates[0]
+                    print(f"Warning: {config.model.name} not found. Falling back to: {self.model_path.name}")
+                else:
+                    raise FileNotFoundError(
+                        f"Face model file not found at {self.model_path}. "
+                        f"Please run 'python scripts/download_models.py' first."
+                    )
+
+            print(f"Loading SCRFD Face Detector: {self.model_path.name}")
+            self.detector = SCRFDDetector(
+                model_path=str(self.model_path),
+                conf_threshold=self.config.model.conf_threshold,
+                nms_threshold=self.config.model.nms_threshold
+            )
+
+        # Selective Model Loading: Only load license plate detector if target includes plates
+        if self.config.detect_plates:
+            if not self.plate_model_path.exists():
+                candidates = sorted(list(base_model_dir.glob("*plate*.onnx")))
+                if candidates:
+                    self.plate_model_path = candidates[0]
+                    print(f"Warning: {config.plate_model.name} not found. Falling back to: {self.plate_model_path.name}")
+                else:
+                    # Attempt on-demand download of the license plate model
+                    try:
+                        from scripts.download_models import MODELS, download_file
+                        p_name = config.plate_model.name
+                        if p_name in MODELS:
+                            info_m = MODELS[p_name]
+                            print(f"Auto-downloading missing license plate model: {p_name}...")
+                            download_file(
+                                info_m["url"],
+                                self.plate_model_path,
+                                fallback_url=info_m.get("fallback_url"),
+                                min_size=info_m.get("expected_min_size", 1_000_000)
+                            )
+                    except Exception as e:
+                        print(f"Warning: Auto-download of license plate model failed: {e}")
+
+            if not self.plate_model_path.exists():
                 raise FileNotFoundError(
-                    f"Model file not found at {self.model_path}. "
+                    f"License plate model file not found at {self.plate_model_path}. "
                     f"Please run 'python scripts/download_models.py' first."
                 )
 
-
-        print(f"Loading SCRFD Face Detector: {self.model_path.name}")
-        self.detector = SCRFDDetector(
-            model_path=str(self.model_path),
-            conf_threshold=self.config.model.conf_threshold,
-            nms_threshold=self.config.model.nms_threshold
-        )
+            print(f"Loading License Plate Detector: {self.plate_model_path.name}")
+            self.plate_detector = LicensePlateDetector(
+                model_path=str(self.plate_model_path),
+                conf_threshold=self.config.plate_model.conf_threshold,
+                nms_threshold=self.config.plate_model.nms_threshold
+            )
 
         self.blurrer = FaceBlurrer(
             blur_type=self.config.blur.type,
@@ -57,8 +99,19 @@ class ProcessingPipeline:
             mosaic_block_size=self.config.blur.mosaic_block_size,
             margin_x=self.config.blur.margin_x,
             margin_y=self.config.blur.margin_y,
-            shape=getattr(self.config.blur, "shape", "ellipse")
+            shape=getattr(self.config.blur, "shape", "ellipse"),
+            plate_margin_x=getattr(self.config.plate_model, "margin_x", 0.15),
+            plate_margin_y=getattr(self.config.plate_model, "margin_y", 0.15),
+            plate_shape=getattr(self.config.plate_model, "shape", "rect")
         )
+
+    @property
+    def active_provider(self) -> str:
+        if self.detector is not None and hasattr(self.detector, "active_provider"):
+            return self.detector.active_provider
+        if self.plate_detector is not None and hasattr(self.plate_detector, "active_provider"):
+            return self.plate_detector.active_provider
+        return "CPU"
 
     def process_video(
         self,
@@ -127,12 +180,13 @@ class ProcessingPipeline:
         if resume and checkpoint.matches_input(
             in_path,
             model_name=self.config.model.name,
-            conf_threshold=self.config.model.conf_threshold
+            conf_threshold=self.config.model.conf_threshold,
+            target_mode=self.config.target
         ):
             if checkpoint.is_pass1_completed():
                 loaded_map = checkpoint.load_frame_bboxes_map()
                 if loaded_map is not None:
-                    print(f"[Resume] Found completed Pass 1 checkpoint for {in_path.name}. Skipping face detection!")
+                    print(f"[Resume] Found completed Pass 1 checkpoint for {in_path.name}. Skipping detection!")
                     frame_bboxes_map = loaded_map
                     total_frames = len(frame_bboxes_map)
                     pass1_done = True
@@ -153,15 +207,22 @@ class ProcessingPipeline:
                     info.height,
                     info.fps,
                     model_name=self.config.model.name,
-                    conf_threshold=self.config.model.conf_threshold
+                    conf_threshold=self.config.model.conf_threshold,
+                    target_mode=self.config.target
                 )
 
         if not pass1_done:
-            # ----------------- PASS 1: Face Detection & Tracking -----------------
-            print(f"\n[Pass 1/2] Detecting faces in {in_path.name} ({out_width}x{out_height}, {info.fps:.2f} fps)...")
+            # ----------------- PASS 1: Detection & Tracking -----------------
+            target_desc = {
+                "faces": "faces",
+                "plates": "license plates",
+                "both": "faces & license plates"
+            }.get(self.config.target, "targets")
+            print(f"\n[Pass 1/2] Detecting {target_desc} in {in_path.name} ({out_width}x{out_height}, {info.fps:.2f} fps)...")
             
             # Optimal scale for Pass 1 detection (e.g. 640x360 for 4K 16:9) to maximize hardware throughput
-            input_sz = getattr(self.detector, "input_size", (640, 640))
+            active_det = self.detector or self.plate_detector
+            input_sz = getattr(active_det, "input_size", (640, 640))
             if isinstance(input_sz, (tuple, list)) and len(input_sz) == 2:
                 det_w, det_h = int(input_sz[0]), int(input_sz[1])
             else:
@@ -198,14 +259,27 @@ class ProcessingPipeline:
                     if frame_idx in cached_detections:
                         valid_dets = cached_detections[frame_idx]
                     else:
-                        try:
-                            detections = self.detector.detect(frame, orig_shape=(out_height, out_width))
-                        except TypeError:
-                            detections = self.detector.detect(frame)
-                        valid_dets = [
-                            d for d in detections 
-                            if min(d.width, d.height) >= self.config.model.min_face_size
-                        ]
+                        valid_dets = []
+                        if self.config.detect_faces and self.detector is not None:
+                            try:
+                                face_dets = self.detector.detect(frame, orig_shape=(out_height, out_width))
+                            except TypeError:
+                                face_dets = self.detector.detect(frame)
+                            valid_dets.extend([
+                                d for d in face_dets
+                                if min(d.width, d.height) >= self.config.model.min_face_size
+                            ])
+
+                        if self.config.detect_plates and self.plate_detector is not None:
+                            try:
+                                plate_dets = self.plate_detector.detect(frame, orig_shape=(out_height, out_width))
+                            except TypeError:
+                                plate_dets = self.plate_detector.detect(frame)
+                            valid_dets.extend([
+                                d for d in plate_dets
+                                if min(d.width, d.height) >= self.config.plate_model.min_plate_size
+                            ])
+
                         if resume:
                             checkpoint.append_detection(frame_idx, valid_dets)
 
@@ -228,10 +302,12 @@ class ProcessingPipeline:
                             y1 = int(round(d.y1 * scale))
                             x2 = int(round(d.x2 * scale))
                             y2 = int(round(d.y2 * scale))
-                            cv2.rectangle(disp_frame, (x1, y1), (x2, y2), (0, 230, 118), 2)
-                            conf_text = f"{d.score:.2f}"
+                            is_plate = getattr(d, "label", "face") == "plate"
+                            box_color = (0, 165, 255) if is_plate else (0, 230, 118)
+                            conf_text = f"LP {d.score:.2f}" if is_plate else f"{d.score:.2f}"
+                            cv2.rectangle(disp_frame, (x1, y1), (x2, y2), box_color, 2)
                             cv2.putText(disp_frame, conf_text, (x1, max(15, y1 - 4)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 230, 118), 1)
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, box_color, 1)
                         tot_str = str(info.total_frames) if info.total_frames else "?"
                         try:
                             preview_callback(disp_frame, f"Pass 1/2: Detection ({frame_idx + 1}/{tot_str})")

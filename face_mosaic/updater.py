@@ -1,5 +1,5 @@
 """
-Self-update module for face-mosaic.
+Self-update module for auto-mosaic.
 Supports checking GitHub Releases, updating via Git or downloading release assets,
 and platform-specific replacement.
 """
@@ -20,7 +20,7 @@ import urllib.error
 
 from face_mosaic import __version__
 
-GITHUB_REPO = "kh813/face-mosaic"
+GITHUB_REPO = "kh813/auto-mosaic"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 def parse_version(v_str: str) -> Tuple[int, ...]:
@@ -41,7 +41,7 @@ def is_newer_version(latest_tag: str, current_ver: str) -> bool:
     return parse_version(latest_tag) > parse_version(current_ver)
 
 def get_project_root() -> Path:
-    """Return the absolute path to the face-mosaic project root."""
+    """Return the absolute path to the auto-mosaic project root."""
     return Path(__file__).resolve().parent.parent
 
 def is_git_repository(project_root: Optional[Path] = None) -> bool:
@@ -58,7 +58,7 @@ def check_for_updates(current_version: Optional[str] = None) -> Optional[Dict[st
     cur_ver = current_version or __version__
     req = urllib.request.Request(
         GITHUB_API_LATEST_RELEASE,
-        headers={"User-Agent": f"face-mosaic-updater/{cur_ver}"}
+        headers={"User-Agent": f"auto-mosaic-updater/{cur_ver}"}
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -76,9 +76,9 @@ def check_for_updates(current_version: Optional[str] = None) -> Optional[Dict[st
     if is_newer_version(tag_name, cur_ver):
         # Find matching asset for current platform
         if sys.platform == "win32":
-            target_asset_names = ["face-mosaic-windows.zip"]
+            target_asset_names = ["auto-mosaic-windows.zip"]
         else:
-            target_asset_names = ["face-mosaic-macos.zip", "face-mosaic-macos.tar.gz"]
+            target_asset_names = ["auto-mosaic-macos.zip", "auto-mosaic-macos.tar.gz"]
 
         asset_url = None
         for asset in data.get("assets", []):
@@ -165,7 +165,7 @@ def update_via_release_asset(
         download_path = temp_dir / archive_name
 
         # Download with chunked progress
-        req = urllib.request.Request(asset_url, headers={"User-Agent": "face-mosaic-updater"})
+        req = urllib.request.Request(asset_url, headers={"User-Agent": "auto-mosaic-updater"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             total_size = int(resp.headers.get("content-length", 0))
             downloaded = 0

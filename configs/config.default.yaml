@@ -1,4 +1,10 @@
-# Default configuration for face-mosaic
+# Default configuration for auto-mosaic
+
+# Detection target mode to optimize PC / Mac hardware load:
+# - "faces": Detect and mosaic human faces only (minimal CPU/GPU/NPU load)
+# - "plates": Detect and mosaic vehicle license plates only (minimal CPU/GPU/NPU load)
+# - "both": Detect and mosaic both human faces and license plates
+target: "faces"
 
 # Face detection model settings
 model:
@@ -7,6 +13,16 @@ model:
   nms_threshold: 0.4             # Non-maximum suppression IoU threshold
   min_face_size: 15              # Minimum face bounding box size in pixels
   landmark_score_threshold: 0.3  # Landmark confidence filter
+
+# License plate detection model settings
+plate_model:
+  name: "license-plate-finetune-v1n.onnx" # YOLOv11n ONNX model for license plates
+  conf_threshold: 0.40           # License plate detection confidence threshold (0.0 - 1.0)
+  nms_threshold: 0.45            # Non-maximum suppression IoU threshold
+  min_plate_size: 12             # Minimum license plate size (short side in pixels)
+  margin_x: 0.15                 # Horizontal expansion ratio for license plate bounding box
+  margin_y: 0.15                 # Vertical expansion ratio for license plate bounding box
+  shape: "rect"                  # Options: "rect" (recommended for rectangular plates) or "ellipse"
 
 # Tracking & temporal smoothing
 tracking:
@@ -56,7 +72,7 @@ filters:
 
 # Output & encoding settings
 output:
-  codec: "hevc"                  # Options: "hevc" (libx265) or "h264" (libx264)
+  codec: "auto"                  # Options: "auto" (match input video codec), "hevc" (libx265), or "h264" (libx264)
   crf: 23                        # Constant Rate Factor (23 recommended for optimal balance and ~50% size reduction, 18 for archival quality)
   preset: "medium"               # Encoder preset (ultrafast, fast, medium, slow)
   bit_depth: "auto"              # Options: "auto" (match input), "8bit" (force 8-bit for size & compatibility), "10bit"

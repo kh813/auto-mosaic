@@ -1,5 +1,5 @@
 """
-Checkpoint and resume manager for face-mosaic pipeline.
+Checkpoint and resume manager for auto-mosaic pipeline.
 Provides resilient processing: saves Pass 1 face detection progress incrementally,
 caches completed tracklet/bounding box maps, and resumes interrupted tasks.
 """
@@ -37,7 +37,8 @@ class VideoCheckpoint:
         self,
         input_path: Path,
         model_name: str = "",
-        conf_threshold: float = 0.5
+        conf_threshold: float = 0.5,
+        target_mode: Optional[str] = None
     ) -> bool:
         """Check if existing checkpoint matches the current input video and model settings."""
         if not self.exists():
@@ -46,12 +47,16 @@ class VideoCheckpoint:
             with open(self.state_file, "r", encoding="utf-8") as f:
                 state = json.load(f)
             stat = input_path.stat()
+            target_ok = True
+            if target_mode is not None:
+                target_ok = state.get("target_mode", "faces") == target_mode
             return (
                 state.get("input_path") == str(input_path.resolve())
                 and state.get("input_size") == stat.st_size
                 and abs(state.get("input_mtime", 0.0) - stat.st_mtime) < 1.0
                 and state.get("model_name", "") == model_name
                 and abs(state.get("conf_threshold", 0.5) - conf_threshold) < 0.01
+                and target_ok
             )
         except Exception:
             return False
@@ -64,7 +69,8 @@ class VideoCheckpoint:
         height: int,
         fps: float,
         model_name: str = "",
-        conf_threshold: float = 0.5
+        conf_threshold: float = 0.5,
+        target_mode: str = "faces"
     ):
         """Initialize or reset state file for a new processing run."""
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -79,6 +85,7 @@ class VideoCheckpoint:
             "fps": fps,
             "model_name": model_name,
             "conf_threshold": conf_threshold,
+            "target_mode": target_mode,
             "pass1_completed": False,
             "last_detected_frame": -1
         }
@@ -142,14 +149,18 @@ class VideoCheckpoint:
             json.dump(state, f, indent=2)
 
     def append_detection(self, frame_idx: int, detections: List[FaceDetection]):
-        """Buffers detected faces for frame_idx and flushes periodically."""
+        """Buffers detected faces/plates for frame_idx and flushes periodically."""
         dets_data = []
         for d in detections:
             bbox_coords = [round(float(c), 1) for c in d.bbox]
-            dets_data.append({
+            entry_d = {
                 "bbox": bbox_coords,
                 "score": round(float(d.score), 3)
-            })
+            }
+            lbl = getattr(d, "label", "face")
+            if lbl != "face":
+                entry_d["label"] = lbl
+            dets_data.append(entry_d)
         entry = json.dumps({"f": frame_idx, "d": dets_data})
         self._det_buffer.append(entry)
         if len(self._det_buffer) >= 100:
@@ -190,7 +201,11 @@ class VideoCheckpoint:
                     obj = json.loads(line)
                     f_idx = int(obj["f"])
                     dets = [
-                        FaceDetection(bbox=np.array(d["bbox"], dtype=np.float32), score=float(d["score"]))
+                        FaceDetection(
+                            bbox=np.array(d["bbox"], dtype=np.float32),
+                            score=float(d["score"]),
+                            label=d.get("label", "face")
+                        )
                         for d in obj.get("d", [])
                     ]
                     cached[f_idx] = dets

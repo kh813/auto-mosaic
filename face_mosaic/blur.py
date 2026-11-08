@@ -1,5 +1,5 @@
 """
-Face blur and mosaic rendering module for face-mosaic.
+Face and license plate blur and mosaic rendering module for auto-mosaic.
 Implements Gaussian blur and Mosaic pixelation with margin expansion
 and round (elliptical/circular) or rectangular shapes.
 """
@@ -16,7 +16,10 @@ class FaceBlurrer:
         mosaic_block_size: int = 28,
         margin_x: float = 0.50,
         margin_y: float = 0.50,
-        shape: str = "ellipse"  # "ellipse" (round), "circle", or "rect"
+        shape: str = "ellipse",  # "ellipse" (round), "circle", or "rect"
+        plate_margin_x: float = 0.15,
+        plate_margin_y: float = 0.15,
+        plate_shape: str = "rect"
     ):
         self.blur_type = blur_type.lower()
         self.strength = strength if strength % 2 == 1 else strength + 1  # ensure odd
@@ -24,8 +27,18 @@ class FaceBlurrer:
         self.margin_x = max(0.0, margin_x)
         self.margin_y = max(0.0, margin_y)
         self.shape = shape.lower()
+        self.plate_margin_x = max(0.0, plate_margin_x)
+        self.plate_margin_y = max(0.0, plate_margin_y)
+        self.plate_shape = plate_shape.lower()
 
-    def expand_bbox(self, bbox: np.ndarray, img_w: int, img_h: int) -> Tuple[int, int, int, int]:
+    def expand_bbox(
+        self,
+        bbox: np.ndarray,
+        img_w: int,
+        img_h: int,
+        margin_x: float = None,
+        margin_y: float = None
+    ) -> Tuple[int, int, int, int]:
         """
         Expand bounding box [x1, y1, x2, y2] by margin ratios and clip to image boundaries.
         """
@@ -33,8 +46,11 @@ class FaceBlurrer:
         w = x2 - x1
         h = y2 - y1
 
-        dx = w * self.margin_x
-        dy = h * self.margin_y
+        mx = self.margin_x if margin_x is None else margin_x
+        my = self.margin_y if margin_y is None else margin_y
+
+        dx = w * mx
+        dy = h * my
 
         ex1 = int(max(0, np.floor(x1 - dx)))
         ey1 = int(max(0, np.floor(y1 - dy)))
@@ -81,7 +97,14 @@ class FaceBlurrer:
         mask = np.zeros((h, w), dtype=np.uint8)
 
         for bbox in bboxes:
-            x1, y1, x2, y2 = self.expand_bbox(bbox, w, h)
+            is_plate = len(bbox) >= 5 and float(bbox[4]) == 1.0
+            if is_plate:
+                x1, y1, x2, y2 = self.expand_bbox(bbox, w, h, margin_x=self.plate_margin_x, margin_y=self.plate_margin_y)
+                active_shape = self.plate_shape
+            else:
+                x1, y1, x2, y2 = self.expand_bbox(bbox, w, h)
+                active_shape = self.shape
+
             if x2 <= x1 or y2 <= y1:
                 continue
 
@@ -95,7 +118,7 @@ class FaceBlurrer:
             else:
                 blurred_roi = self.apply_gaussian_to_roi(roi)
 
-            if self.shape in ("ellipse", "round", "circle"):
+            if active_shape in ("ellipse", "round", "circle"):
                 # Generate smooth anti-aliased elliptical/circular mask
                 ellipse_mask = np.zeros((rh, rw), dtype=np.uint8)
                 center = (rw // 2, rh // 2)

@@ -1,4 +1,4 @@
-' run_gui.vbs - Launch face-mosaic GUI silently without showing cmd.exe
+' run_gui.vbs - Launch auto-mosaic GUI silently without showing cmd.exe
 Option Explicit
 
 Dim WshShell, fso, scriptDir, rootDir, cmd
