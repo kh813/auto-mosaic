@@ -1,4 +1,4 @@
-﻿﻿# setup_and_run.ps1
+﻿# setup_and_run.ps1
 # Automates Windows environment setup and launches auto-mosaic GUI / CLI.
 
 param(
