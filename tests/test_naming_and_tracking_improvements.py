@@ -222,3 +222,115 @@ def test_fps_adaptive_padding_scaling():
     assert t_no_scale.padding_backward == 12
     assert t_no_scale.max_missing_frames == 16
 
+
+def test_bicycle_rider_fast_motion_tracking():
+    """
+    Test rapid displacement of cyclist face (e.g. 50px/frame for 80x80 box).
+    Verifies that dual-anchor matching and extended search radius maintain a SINGLE continuous track
+    without splitting into isolated tracks that leave lingering mosaic boxes at the starting position.
+    """
+    tracker = FaceTracker(iou_threshold=0.3, padding_backward=12, padding_forward=24)
+    dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Cyclist face moves from x=200 to x=700 across 10 frames (50px per frame)
+    w, h = 80.0, 80.0
+    for f in range(10):
+        cx = 200.0 + f * 50.0
+        cy = 300.0 + (f % 2) * 5.0  # slight vertical bounce
+        bbox = np.array([cx, cy, cx + w, cy + h], dtype=np.float32)
+        det = FaceDetection(bbox=bbox, score=0.92, label="face")
+        tracker.update(f, dummy_frame, [det])
+
+    # Should establish exactly ONE tracklet across all 10 frames
+    tracker.finish()
+    valid_tracks = [t for t in tracker.finished_tracks if len(t.frames) > 1]
+    assert len(valid_tracks) == 1, f"Expected 1 continuous track for cyclist, got {len(valid_tracks)}"
+    track = valid_tracks[0]
+    assert len(track.frames) == 10
+
+    # Verify frame map accurately follows the cyclist's motion
+    frame_map = tracker.get_frame_bboxes_map(total_frames=30, img_w=1920, img_h=1080)
+    for f in range(10):
+        assert len(frame_map[f]) >= 1
+        box = frame_map[f][0]
+        expected_x1 = 200.0 + f * 50.0
+        # Mosaic bounding box must follow current position, NOT be stuck at initial x=200
+        assert abs(box[0] - expected_x1) < 2.0, f"Frame {f}: bbox x1={box[0]} did not follow cyclist ({expected_x1})"
+
+
+def test_moving_license_plate_tracking():
+    """
+    Test rapid displacement of moving vehicle license plate (aspect ratio ~ 2.5:1, 60px/frame).
+    Verifies plates are continuously tracked and tagged with 5th dimension=1.0.
+    """
+    tracker = FaceTracker(iou_threshold=0.3, padding_backward=8, padding_forward=16)
+    dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Car license plate: width 120px, height 45px, moving right by 60px per frame
+    pw, ph = 120.0, 45.0
+    for f in range(8):
+        px = 100.0 + f * 60.0
+        py = 500.0
+        bbox = np.array([px, py, px + pw, py + ph], dtype=np.float32)
+        det = FaceDetection(bbox=bbox, score=0.95, label="plate")
+        tracker.update(f, dummy_frame, [det])
+
+    tracker.finish()
+    valid_tracks = [t for t in tracker.finished_tracks if len(t.frames) > 1]
+    assert len(valid_tracks) == 1, f"Expected 1 continuous plate track, got {len(valid_tracks)}"
+    assert valid_tracks[0].label == "plate"
+
+    frame_map = tracker.get_frame_bboxes_map(total_frames=25, img_w=1920, img_h=1080)
+    for f in range(8):
+        box = frame_map[f][0]
+        assert len(box) == 5 and box[4] == 1.0, "License plate must be tagged with 5th element 1.0"
+        expected_px = 100.0 + f * 60.0
+        assert abs(box[0] - expected_px) < 2.0, f"Frame {f}: plate x1={box[0]} did not match vehicle position ({expected_px})"
+
+
+def test_intermittent_detection_interpolation():
+    """
+    Test that when detection drops for 2 frames (motion blur / head turn),
+    linear interpolation seamlessly bridges the gap and tracks the moving subject.
+    """
+    tracker = FaceTracker(iou_threshold=0.3, max_missing_frames=10)
+    dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Detection at frame 0, then missing frames 1 & 2, then detected at frame 3
+    det0 = FaceDetection(bbox=np.array([100.0, 100.0, 180.0, 180.0]), score=0.9)
+    det3 = FaceDetection(bbox=np.array([250.0, 100.0, 330.0, 180.0]), score=0.9)
+
+    tracker.update(0, dummy_frame, [det0])
+    tracker.update(1, dummy_frame, [])  # Drop
+    tracker.update(2, dummy_frame, [])  # Drop
+    tracker.update(3, dummy_frame, [det3])  # Reappear 150px away
+
+    frame_map = tracker.get_frame_bboxes_map(total_frames=10, img_w=1920, img_h=1080)
+
+    # Frame 1 and 2 must have interpolated bboxes advancing smoothly
+    assert len(frame_map[1]) == 1
+    assert len(frame_map[2]) == 1
+    # Frame 1: 100 + (250-100)*(1/3) = 150
+    assert abs(frame_map[1][0][0] - 150.0) < 1.0
+    # Frame 2: 100 + (250-100)*(2/3) = 200
+    assert abs(frame_map[2][0][0] - 200.0) < 1.0
+
+
+def test_isolated_detection_adaptive_padding():
+    """
+    Verify that an isolated single-frame detection does not leave an excessive 24-frame
+    stationary mosaic box at the old position.
+    """
+    tracker = FaceTracker(padding_backward=12, padding_forward=24)
+    dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    det = FaceDetection(bbox=np.array([400.0, 400.0, 480.0, 480.0]), score=0.88)
+    tracker.update(10, dummy_frame, [det])
+
+    frame_map = tracker.get_frame_bboxes_map(total_frames=50, img_w=1920, img_h=1080)
+
+    # For single isolated detection, forward padding is capped to 4 frames (frames 11..14)
+    assert len(frame_map[14]) == 1
+    assert len(frame_map[15]) == 0, "Isolated detection should NOT persist beyond 4 forward frames"
+
+
