@@ -37,10 +37,10 @@ class TrackingConfig:
 @dataclass
 class BlurConfig:
     type: str = "gaussian"  # "gaussian" or "mosaic"
-    strength: int = 51      # Gaussian blur kernel size (odd)
-    mosaic_block_size: int = 28
-    margin_x: float = 0.50
-    margin_y: float = 0.50
+    strength: int = 71      # Gaussian blur kernel size (odd, enhanced default for stronger anonymity)
+    mosaic_block_size: int = 36  # Mosaic block pixel size
+    margin_x: float = 0.55  # Safe boundary margins to prevent exposure during body sway
+    margin_y: float = 0.55
     shape: str = "ellipse"  # "ellipse" (round) or "rect"
 
 @dataclass

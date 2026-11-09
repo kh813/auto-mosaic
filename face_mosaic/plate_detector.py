@@ -214,8 +214,25 @@ class LicensePlateDetector(BaseFaceDetector):
         keep = self._nms(bboxes, scores, self.nms_threshold)
         results = []
         for i in keep:
+            b = bboxes[i]
+            bw_real = b[2] - b[0]
+            bh_real = b[3] - b[1]
+            if bw_real <= 0 or bh_real <= 0:
+                continue
+
+            ar = bw_real / bh_real
+            # Japanese standard license plates have aspect ratio ~2.0 (330x165mm, 440x220mm).
+            # With perspective tilt, valid range is [1.25, 2.70].
+            # Reject station signboards/banners (ar >= 2.75 or ar < 1.20)
+            if not (1.25 <= ar <= 2.70):
+                continue
+
+            # Reject overhead ceiling signs (typically hanging at the top 22% of the frame with high aspect ratio)
+            if b[3] < (orig_h * 0.22) and ar > 2.1:
+                continue
+
             results.append(FaceDetection(
-                bbox=bboxes[i],
+                bbox=b,
                 score=float(scores[i]),
                 landmarks=None,
                 label="plate"

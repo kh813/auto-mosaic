@@ -162,6 +162,27 @@ class Tracklet:
         pred[3] = max(pred[3], pred[1] + h * 0.5)
         return pred
 
+    def is_out_of_frame(self, img_w: int, img_h: int) -> bool:
+        """
+        Check if object has left the visible canvas or reached screen borders moving outwards.
+        """
+        box = self.latest_bbox
+        vel = self.get_velocity()
+        margin = 15.0
+        # Reached left border moving left, or fully outside
+        if (box[0] <= margin and vel[0] < -0.3) or box[2] <= 0:
+            return True
+        # Reached right border moving right, or fully outside
+        if (box[2] >= img_w - margin and vel[2] > 0.3) or box[0] >= img_w:
+            return True
+        # Reached top border moving up, or fully outside
+        if (box[1] <= margin and vel[1] < -0.3) or box[3] <= 0:
+            return True
+        # Reached bottom border moving down, or fully outside
+        if (box[3] >= img_h - margin and vel[3] > 0.3) or box[1] >= img_h:
+            return True
+        return False
+
 class FaceTracker:
     """
     Online tracker with batch completion & track-level filtering.
@@ -303,13 +324,27 @@ class FaceTracker:
                 self.next_track_id += 1
                 self.active_tracks.append(track)
 
-        # Retire stale tracks
+        # Retire stale tracks:
+        # If subject reached boundary moving out -> retire normally.
+        # If subject remains inside frame -> persist up to max_missing_frames * 2.5
+        # so turning heads, looking down, or swaying body never causes mosaic dropout!
+        frame_w = orig_shape[1] if orig_shape else frame.shape[1]
+        frame_h = orig_shape[0] if orig_shape else frame.shape[0]
         still_active = []
         for t_idx, track in enumerate(self.active_tracks):
-            if frame_idx - track.last_frame > self.max_missing_frames:
-                self.finished_tracks.append(track)
+            missing = frame_idx - track.last_frame
+            if track.is_out_of_frame(frame_w, frame_h):
+                if missing > max(4, int(self.max_missing_frames * 0.4)):
+                    self.finished_tracks.append(track)
+                else:
+                    still_active.append(track)
             else:
-                still_active.append(track)
+                # Subject is still inside screen canvas! Persist tracking.
+                max_persist = int(self.max_missing_frames * 2.5)
+                if missing > max_persist:
+                    self.finished_tracks.append(track)
+                else:
+                    still_active.append(track)
         self.active_tracks = still_active
 
     def finish(self):
@@ -432,9 +467,8 @@ class FaceTracker:
                         bbox = (1 - alpha) * track.frames[prev_f] + alpha * track.frames[next_f]
                     frame_map[f].append(_tag_bbox(bbox))
 
-            # Adaptive padding based on track maturity:
-            # Isolated single-frame detections (num_detections == 1) get minimal padding to prevent
-            # stationary mosaic blocks lingering at old positions when subjects are moving.
+            # Adaptive padding based on track maturity and persistence
+            is_offscreen = track.is_out_of_frame(img_w, img_h)
             if num_detections == 1:
                 active_pad_back = min(self.padding_backward, 3)
                 active_pad_fwd = min(self.padding_forward, 4)
@@ -450,7 +484,6 @@ class FaceTracker:
             has_velocity = np.any(np.abs(vel) > 1.0)
 
             # Apply backward padding (before start)
-            # If moving, extrapolate in reverse direction with decay so mosaic leads the incoming subject
             for pad_i in range(1, active_pad_back + 1):
                 target_f = min_f - pad_i
                 if 0 <= target_f < total_frames:
@@ -477,7 +510,6 @@ class FaceTracker:
                     if has_velocity and num_detections >= 2:
                         decay = 0.96 ** pad_i
                         extrapolated = end_bbox + vel * (pad_i * decay)
-                        # Expand by 5% safety margin to ensure no facial exposure
                         w = max(1.0, extrapolated[2] - extrapolated[0])
                         h = max(1.0, extrapolated[3] - extrapolated[1])
                         pad_box = np.array([

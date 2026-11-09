@@ -733,16 +733,16 @@ class MainWindow(QMainWindow):
         self.spin_margin = QSpinBox()
         self.spin_margin.setRange(0, 100)
         self.spin_margin.setSingleStep(5)
-        self.spin_margin.setValue(50)
+        self.spin_margin.setValue(55)
         grid.addWidget(self.spin_margin, 3, 1)
 
         self.lbl_strength = QLabel("Blur Strength (odd):")
         self._lbl_strength_info = _make_info(
             "<b>ぼかし強度</b><br>"
             "Gaussian モード時: カーネルサイズ（奇数）。大きいほど強くぼかします。<br>"
-            "　推奨: 51〜99 / デフォルト: 51<br><br>"
+            "　推奨: 61〜99 / デフォルト: 71<br><br>"
             "Mosaic モード時: ブロックサイズ（ピクセル）。大きいほどモザイクが粗く強力になります。<br>"
-            "　推奨: 24〜36（判別不能）/ デフォルト: 28"
+            "　推奨: 32〜48（判別不能）/ デフォルト: 36"
         )
         _row_strength_right = QHBoxLayout()
         _row_strength_right.setContentsMargins(0, 0, 0, 0)
@@ -755,7 +755,7 @@ class MainWindow(QMainWindow):
         self.spin_strength = QSpinBox()
         self.spin_strength.setRange(3, 199)
         self.spin_strength.setSingleStep(2)
-        self.spin_strength.setValue(51)
+        self.spin_strength.setValue(71)
         grid.addWidget(self.spin_strength, 3, 3)
 
         # ---- Row 4: Blur Type / Blur Shape ----
@@ -1044,10 +1044,10 @@ class MainWindow(QMainWindow):
     def _on_blur_type_changed(self, text: str):
         if text.lower() == "mosaic":
             self.lbl_strength.setText("Mosaic Block Size:")
-            self.spin_strength.setValue(28)
+            self.spin_strength.setValue(36)
         else:
             self.lbl_strength.setText("Blur Strength (odd):")
-            self.spin_strength.setValue(51)
+            self.spin_strength.setValue(71)
 
     def _select_files(self):
         start_dir = self.last_open_dir
