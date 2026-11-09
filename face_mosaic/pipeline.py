@@ -107,11 +107,12 @@ class ProcessingPipeline:
 
     @property
     def active_provider(self) -> str:
-        if self.detector is not None and hasattr(self.detector, "active_provider"):
-            return self.detector.active_provider
-        if self.plate_detector is not None and hasattr(self.plate_detector, "active_provider"):
-            return self.plate_detector.active_provider
-        return "CPU"
+        parts = []
+        if self.config.detect_faces and self.detector is not None and hasattr(self.detector, "active_provider"):
+            parts.append(f"Faces: {self.detector.active_provider}")
+        if self.config.detect_plates and self.plate_detector is not None and hasattr(self.plate_detector, "active_provider"):
+            parts.append(f"Plates: {self.plate_detector.active_provider}")
+        return " | ".join(parts) if parts else "CPU"
 
     def process_video(
         self,

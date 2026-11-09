@@ -102,7 +102,8 @@ class SCRFDDetector(BaseFaceDetector):
                 ov_model = core.read_model(str(self.model_path))
                 ov_model.reshape([1, 3, self.input_size[1], self.input_size[0]])
                 self.ov_compiled = core.compile_model(ov_model, target_device)
-                self.active_provider = f"OpenVINO ({target_device})"
+                dev_label = "Arc GPU + AI Boost NPU" if target_device == "MULTI:GPU,NPU" else ("Intel Arc GPU" if target_device == "GPU" else target_device)
+                self.active_provider = f"OpenVINO ({dev_label})"
                 self.output_names = [o.get_any_name() for o in ov_model.outputs]
                 print(f"[Hardware Acceleration] Active: {self.active_provider}")
         except Exception:
