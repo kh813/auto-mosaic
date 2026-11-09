@@ -192,12 +192,7 @@ if ($AppArgs -and $AppArgs.Count -gt 0) {
     if (-not (Test-Path $venvPythonw)) {
         $venvPythonw = $venvPython
     }
-    # Pre-flight check: ensure GUI module can be imported without fatal errors
-    $checkOutput = & $venvPython -c "import face_mosaic.gui.app" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "アプリケーションの読み込みに失敗しました:`n$checkOutput"
-    }
-    # Start GUI detached with pythonw (no console window)
+    # Start GUI detached with pythonw (splash screen handles startup feedback)
     Start-Process -FilePath $venvPythonw -ArgumentList @("-m", "face_mosaic.gui.app") -WorkingDirectory $rootDir
 }
 } catch {

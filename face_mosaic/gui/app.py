@@ -23,14 +23,15 @@ from typing import List, Optional, Dict, Any
 import numpy as np
 import cv2
 
-from PySide6.QtCore import Qt, QThread, Signal, Slot, QRect, QSize, QPoint, QSettings, QMimeData, QItemSelectionModel, QUrl
-from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QAction, QDrag, QKeySequence, QShortcut, QIcon, QCursor
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QRect, QSize, QPoint, QSettings, QMimeData, QItemSelectionModel, QUrl, QTimer
+from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QAction, QDrag, QKeySequence, QShortcut, QIcon, QCursor, QLinearGradient
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QProgressBar, QTextEdit,
     QComboBox, QSpinBox, QDoubleSpinBox, QGroupBox, QGridLayout,
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QMenu, QSizePolicy, QCheckBox, QProgressDialog
+    QAbstractItemView, QMenu, QSizePolicy, QCheckBox, QProgressDialog,
+    QSplashScreen
 )
 
 from face_mosaic.config import AppConfig
@@ -39,6 +40,107 @@ from face_mosaic.cli import collect_video_files
 from face_mosaic.hardware import detect_hardware_profile
 from face_mosaic import __version__
 from face_mosaic.updater import check_for_updates, perform_self_update, is_git_repository
+
+
+class AutoMosaicSplashScreen(QSplashScreen):
+    """
+    Modern dark-themed splash screen with progress bar and status feedback during startup.
+    """
+    def __init__(self):
+        pix = QPixmap(520, 240)
+        pix.fill(Qt.transparent)
+        super().__init__(pix)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        self.progress_value: int = 0
+        self.status_message: str = "起動しています..."
+
+        self.icon_pixmap = None
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
+        if not icon_path.exists():
+            icon_path = Path(__file__).resolve().parent.parent.parent / "assets" / "icon.png"
+        if icon_path.exists():
+            orig_icon = QPixmap(str(icon_path))
+            if not orig_icon.isNull():
+                self.icon_pixmap = orig_icon.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def set_progress(self, val: int, msg: str):
+        self.progress_value = max(0, min(100, val))
+        self.status_message = msg
+        self.repaint()
+        QApplication.processEvents()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+
+        # Rounded dark panel with sleek border
+        bg_color = QColor(22, 22, 26, 250)
+        border_color = QColor(64, 64, 76)
+        painter.setBrush(bg_color)
+        painter.setPen(border_color)
+        painter.drawRoundedRect(1, 1, w - 2, h - 2, 12, 12)
+
+        # App Icon
+        if self.icon_pixmap:
+            painter.drawPixmap(34, 32, self.icon_pixmap)
+            text_x = 108
+        else:
+            text_x = 34
+
+        # Title
+        painter.setPen(QColor(255, 255, 255))
+        font_title = QFont("Segoe UI", 20, QFont.Bold)
+        painter.setFont(font_title)
+        painter.drawText(text_x, 58, "auto-mosaic")
+
+        # Version Badge
+        painter.setPen(QColor(130, 130, 150))
+        font_ver = QFont("Segoe UI", 10)
+        painter.setFont(font_ver)
+        painter.drawText(text_x + 165, 58, f"v{__version__}")
+
+        # Subtitle
+        painter.setPen(QColor(175, 175, 190))
+        font_sub = QFont("Segoe UI", 10)
+        painter.setFont(font_sub)
+        painter.drawText(text_x, 84, "AI Face & License Plate Privacy Mosaic")
+
+        # Status Message
+        painter.setPen(QColor(110, 195, 255))
+        font_msg = QFont("Segoe UI", 9)
+        painter.setFont(font_msg)
+        painter.drawText(34, 160, self.status_message)
+
+        # Progress Percentage
+        painter.setPen(QColor(150, 150, 165))
+        font_pct = QFont("Segoe UI", 9)
+        painter.setFont(font_pct)
+        painter.drawText(w - 70, 160, f"{self.progress_value}%")
+
+        # Progress Bar Track
+        bar_x = 34
+        bar_y = 175
+        bar_w = w - 68
+        bar_h = 6
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(42, 42, 50))
+        painter.drawRoundedRect(bar_x, bar_y, bar_w, bar_h, 3, 3)
+
+        # Progress Bar Fill (Gradient)
+        if self.progress_value > 0:
+            fill_w = int(bar_w * (self.progress_value / 100.0))
+            grad = QLinearGradient(bar_x, bar_y, bar_x + bar_w, bar_y)
+            grad.setColorAt(0.0, QColor(0, 122, 255))
+            grad.setColorAt(1.0, QColor(0, 210, 255))
+            painter.setBrush(grad)
+            painter.drawRoundedRect(bar_x, bar_y, max(6, fill_w), bar_h, 3, 3)
 
 
 class UpdateCheckWorker(QThread):
@@ -374,7 +476,7 @@ class QueueTableWidget(QTableWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, splash: Optional[AutoMosaicSplashScreen] = None):
         super().__init__()
         self.setWindowTitle("auto-mosaic: Automated Face & License Plate Blur Tool")
         self.resize(1100, 680)
@@ -386,7 +488,12 @@ class MainWindow(QMainWindow):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
+        if splash:
+            splash.set_progress(25, "ハードウェア環境を診断中 (Arc GPU / NPU)...")
         self.hw_profile = detect_hardware_profile()
+
+        if splash:
+            splash.set_progress(55, "ユーザー設定とモデル構成をロード中...")
         self.config = AppConfig()
         self.queue_items: List[QueueItem] = []
         self.worker: Optional[ProcessingWorker] = None
@@ -407,6 +514,8 @@ class MainWindow(QMainWindow):
         self.update_checker_worker: Optional[UpdateCheckWorker] = None
         self.self_update_worker: Optional[SelfUpdateWorker] = None
 
+        if splash:
+            splash.set_progress(75, "ユーザーインターフェースを構築中...")
         self.setAcceptDrops(True)
         self._init_menu_bar()
         self._init_ui()
@@ -1945,11 +2054,22 @@ def run_app():
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
+    # Display splash screen immediately so user gets instant visual feedback
+    splash = AutoMosaicSplashScreen()
+    splash.show()
+    splash.set_progress(10, "アプリケーションを起動しています...")
+
     try:
-        window = MainWindow()
+        window = MainWindow(splash=splash)
+        splash.set_progress(95, "メイン画面を表示しています...")
         window.show()
+        splash.set_progress(100, "起動完了")
+        # Seamlessly finish splash screen and transfer focus to main window
+        QTimer.singleShot(350, lambda: splash.finish(window))
         sys.exit(app.exec())
     except Exception:
+        if splash:
+            splash.close()
         import traceback
         err_msg = traceback.format_exc()
         try:
