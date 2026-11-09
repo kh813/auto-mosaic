@@ -1225,8 +1225,22 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
+            reply = QMessageBox.question(
+                self,
+                "処理の中断と終了の確認",
+                "現在、動画のモザイク処理が実行中です。\n\n"
+                "アプリケーションを終了すると、現在処理中の動画は中断（キャンセル）されます。\n"
+                "本当に終了してもよろしいですか？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                event.ignore()
+                return
+
             self.worker.cancel_all()
-            self.worker.wait(1000)
+            self.worker.wait(2000)
+
         if self.last_open_dir and os.path.isdir(self.last_open_dir):
             self.settings.setValue("last_dir", self.last_open_dir)
             self.settings.sync()
@@ -1956,6 +1970,16 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _start_self_update(self, info: dict):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "処理実行中 - アップデート不可",
+                "現在、動画のモザイク処理が実行中です。\n\n"
+                "ファイル破損を防ぎ、処理中の動画を安全に保護するため、\n"
+                "動画の処理が完了するか、停止してからアップデートを実行してください。"
+            )
+            return
+
         self.txt_log.append("\n=======================================================")
         self.txt_log.append("               SELF-UPDATE IN PROGRESS                 ")
         self.txt_log.append("=======================================================")
