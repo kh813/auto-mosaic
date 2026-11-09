@@ -1,9 +1,9 @@
-# Requirements for Windows (Phase 2)
+# Requirements for Windows
 -r requirements-common.txt
 
-# ONNX Runtime on Windows
-# onnxruntime-directml leverages DirectX 12 / DirectML for high-performance GPU acceleration (Intel Arc, NVIDIA, AMD)
+# Intel OpenVINO for Intel Arc GPU / Intel AI Boost NPU acceleration
+openvino>=2024.4.0
+
+# ONNX Runtime DirectML fallback for DirectX 12 GPU acceleration (AMD Radeon, NVIDIA, Intel)
 onnxruntime-directml>=1.18.0
-# onnxruntime>=1.18.0
-# onnxruntime-openvino>=1.18.0
 PySide6>=6.6.0

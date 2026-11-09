@@ -218,7 +218,8 @@ class ProcessingPipeline:
                 "plates": "license plates",
                 "both": "faces & license plates"
             }.get(self.config.target, "targets")
-            print(f"\n[Pass 1/2] Detecting {target_desc} in {in_path.name} ({out_width}x{out_height}, {info.fps:.2f} fps)...")
+            active_accel = self.active_provider
+            print(f"\n[Pass 1/2] Detecting {target_desc} in {in_path.name} ({out_width}x{out_height}, {info.fps:.2f} fps) | Accelerator: {active_accel}...")
             
             # Optimal scale for Pass 1 detection (e.g. 640x360 for 4K 16:9) to maximize hardware throughput
             active_det = self.detector or self.plate_detector
@@ -333,7 +334,6 @@ class ProcessingPipeline:
                 checkpoint.save_pass1_completed(frame_bboxes_map, total_frames)
 
         # ----------------- PASS 2: Blur Rendering & Encoding -----------------
-        print(f"[Pass 2/2] Rendering blur/mosaic and encoding to {out_path.name}...")
         temp_out_path = out_path.with_name(f"{out_path.stem}.part{out_path.suffix}")
         if temp_out_path.exists():
             try:
@@ -353,6 +353,15 @@ class ProcessingPipeline:
             preserve_color_tags=self.config.output.preserve_color_tags,
             bit_depth=self.config.output.bit_depth
         )
+
+        enc_display = {
+            "qsv": "Intel QSV Hardware Encoder (GPU)",
+            "videotoolbox": "Apple VideoToolbox (Hardware)",
+            "nvenc": "NVIDIA NVENC (GPU)",
+            "amf": "AMD AMF (GPU)",
+            "cpu": "CPU Software (Multi-threaded)"
+        }.get(writer.active_encoder, writer.active_encoder.upper())
+        print(f"[Pass 2/2] Rendering mosaic & encoding via {enc_display} to {out_path.name}...")
 
         reader2 = PrefetchedVideoReader(str(in_path))
         pass2_start = time.time()
@@ -435,6 +444,8 @@ class ProcessingPipeline:
             "processing_fps": fps_proc,
             "color_mae": avg_mae,
             "color_delta_e": avg_delta_e,
+            "active_provider": self.active_provider,
+            "active_encoder": writer.active_encoder,
             "status": "success"
         }
 

@@ -201,7 +201,8 @@ class ProcessingWorker(QThread):
                 "plates": f"License Plates Only ({self.config.plate_model.name})",
                 "both": f"Faces + Plates ({self.config.model.name} & {self.config.plate_model.name})"
             }.get(self.config.target, self.config.model.name)
-            self.log_signal.emit(f"Initialized pipeline [{target_label}] on {provider_str}")
+            self.log_signal.emit(f"🚀 AI Detection Acceleration: {provider_str}")
+            self.log_signal.emit(f"⚡ Processing Target: {target_label}")
 
             while not self._cancel_all:
                 item = None
@@ -266,9 +267,10 @@ class ProcessingWorker(QThread):
                         item.progress = "100%"
                         item.output_path = out_p
                         self.item_updated_signal.emit(item.item_id, "Completed", "100%", out_p)
+                        accel_info = f" | AI: {res.get('active_provider', 'N/A')} | Enc: {res.get('active_encoder', 'N/A').upper()}"
                         self.log_signal.emit(
                             f"✓ Finished: {video_path.name} in {res['elapsed_seconds']:.1f}s "
-                            f"({res['processing_fps']:.1f} fps, Color MAE: {res['color_mae']:.4f})"
+                            f"({res['processing_fps']:.1f} fps{accel_info})"
                         )
                 except Exception as e:
                     tb = traceback.format_exc()

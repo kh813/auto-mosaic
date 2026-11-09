@@ -1,4 +1,4 @@
-﻿# setup_and_run.ps1
+# setup_and_run.ps1
 # Automates Windows environment setup and launches auto-mosaic GUI / CLI.
 
 param(
@@ -120,6 +120,13 @@ if ($needVenvSetup) {
     Write-Host "Python environment setup complete!" -ForegroundColor Green
 } else {
     Write-Host "[1/4] Python environment is ready." -ForegroundColor Green
+    # Check if OpenVINO is installed to unlock Intel Arc GPU & NPU acceleration
+    $hasOpenvino = & $venvPython -c "import openvino" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Activating Intel Arc GPU & AI Boost NPU acceleration (installing OpenVINO)..." -ForegroundColor Yellow
+        & $venvPython -m pip install "openvino>=2024.4.0" --no-warn-script-location
+        Write-Host "OpenVINO hardware acceleration installed successfully!" -ForegroundColor Green
+    }
 }
 
 # 2. Check or Setup FFmpeg

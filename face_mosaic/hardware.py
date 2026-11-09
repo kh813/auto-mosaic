@@ -154,8 +154,35 @@ def detect_hardware_profile() -> HardwareProfile:
             rec_model = "scrfd_2.5g_bnkps.onnx"
             reason = f"AMD Ryzen system ({cpu}, {ram:.1f}GB RAM). Auto-selected 2.5G (Fast)."
             is_high = False
+    elif vendor == "intel":
+        # Intel Core / Core Ultra / Intel Arc (OpenVINO GPU+NPU & Intel QSV)
+        has_openvino_npu = any("NPU" in p for p in gpus)
+        has_openvino_gpu = any("GPU" in p for p in gpus)
+        accel_desc = []
+        if has_openvino_gpu and has_openvino_npu:
+            accel_desc.append("OpenVINO Arc GPU + AI Boost NPU")
+        elif has_openvino_gpu:
+            accel_desc.append("OpenVINO Arc GPU")
+        elif has_openvino_npu:
+            accel_desc.append("OpenVINO NPU")
+        elif has_gpu:
+            accel_desc.append(gpus[0].replace("ExecutionProvider", ""))
+
+        accel_str = f", {', '.join(accel_desc)} & QSV" if accel_desc else ""
+        if has_gpu and (ram >= 15.0 or cores >= 8):
+            rec_model = "scrfd_34g_gnkps.onnx"
+            reason = f"Intel high-performance system detected ({cpu}, {ram:.1f}GB RAM{accel_str}). Auto-selected 34G (High Accuracy)."
+            is_high = True
+        elif has_gpu or (ram >= 12.0 and cores >= 6):
+            rec_model = "scrfd_10g_bnkps.onnx"
+            reason = f"Intel system detected ({cpu}, {ram:.1f}GB RAM{accel_str}). Auto-selected 10G (Balanced Default)."
+            is_high = False
+        else:
+            rec_model = "scrfd_2.5g_bnkps.onnx"
+            reason = f"Intel system ({cpu}, {ram:.1f}GB RAM, CPU-only). Auto-selected 2.5G (Fast)."
+            is_high = False
     else:
-        # Intel Core / Arc or Generic: Preserve existing logic exactly
+        # Generic / Fallback
         if has_gpu and (ram >= 15.0 or cores >= 8):
             rec_model = "scrfd_34g_gnkps.onnx"
             provider_name = gpus[0].replace("ExecutionProvider", "")
