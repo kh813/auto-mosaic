@@ -23,11 +23,15 @@ def collect_video_files(
 ) -> List[Path]:
     """
     Collect video files from single files, list of files, and directories.
-    Skips previously processed output files matching exclude_suffix or '_blurred'.
+    Skips previously processed output files matching exclude_suffix or '_blurred',
+    and ignores AppleDouble (._*) and dot-hidden resource fork files.
     """
     collected = []
     for item in inputs:
         p = Path(item).resolve()
+        # Skip Mac AppleDouble resource fork files (._*) and dot-hidden files
+        if p.name.startswith("._") or p.name.startswith("."):
+            continue
         if p.is_file():
             if p.suffix.lower() in VIDEO_EXTENSIONS:
                 collected.append(p)
@@ -36,6 +40,9 @@ def collect_video_files(
         elif p.is_dir():
             pattern = "**/*" if recursive else "*"
             for sub_p in p.glob(pattern):
+                # Skip Mac AppleDouble resource files (._*) and hidden files
+                if sub_p.name.startswith("._") or sub_p.name.startswith("."):
+                    continue
                 if sub_p.is_file() and sub_p.suffix.lower() in VIDEO_EXTENSIONS:
                     # Skip already blurred output files to avoid infinite loops
                     stem = sub_p.stem

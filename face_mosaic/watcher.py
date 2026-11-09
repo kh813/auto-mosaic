@@ -37,6 +37,8 @@ class FolderWatcher:
 
     def _init_existing(self):
         for f in self.watch_dir.glob("**/*"):
+            if f.name.startswith("._") or f.name.startswith("."):
+                continue
             if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
                 self.processed_files.add(str(f.resolve()))
 
@@ -54,6 +56,8 @@ class FolderWatcher:
 
     def scan_and_process(self, pipeline: ProcessingPipeline):
         for file_path in self.watch_dir.glob("**/*"):
+            if file_path.name.startswith("._") or file_path.name.startswith("."):
+                continue
             if not file_path.is_file() or file_path.suffix.lower() not in VIDEO_EXTENSIONS:
                 continue
             stem = file_path.stem

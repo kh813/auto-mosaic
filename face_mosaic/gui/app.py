@@ -1276,6 +1276,9 @@ class MainWindow(QMainWindow):
         added_count = 0
         new_items = []
         for p in new_paths:
+            # Skip Mac AppleDouble (._*) and hidden files
+            if p.name.startswith("._") or p.name.startswith("."):
+                continue
             rp = str(p.resolve())
             if rp not in existing:
                 item = QueueItem(path=p)
@@ -1876,8 +1879,9 @@ class MainWindow(QMainWindow):
                     "アップデート完了",
                     f"最新バージョンへのアップデートが完了しました！\n\n"
                     f"{msg}\n\n"
-                    f"変更を反映するため、アプリケーションを再起動してください。"
+                    f"変更を反映するため、アプリケーションを自動再起動します。"
                 )
+                self._restart_app()
             else:
                 self.txt_log.append(f"✗ アップデート失敗: {msg}")
                 reply = QMessageBox.warning(
@@ -1895,6 +1899,32 @@ class MainWindow(QMainWindow):
         worker.finished_signal.connect(on_finished)
         self.self_update_worker = worker
         worker.start()
+
+    def _restart_app(self):
+        """Cleanly restart the application after updating."""
+        try:
+            root_dir = Path(__file__).resolve().parent.parent.parent
+            if sys.platform == "win32":
+                vbs_path = root_dir / "scripts" / "run_gui.vbs"
+                bat_path = root_dir / "start-app.bat"
+                if vbs_path.exists():
+                    subprocess.Popen(["wscript.exe", "//nologo", str(vbs_path)], cwd=str(root_dir))
+                elif bat_path.exists():
+                    subprocess.Popen(["cmd.exe", "/c", str(bat_path)], cwd=str(root_dir))
+                else:
+                    subprocess.Popen([sys.executable, "-m", "face_mosaic.gui.app"], cwd=str(root_dir))
+            elif sys.platform == "darwin":
+                cmd_path = root_dir / "start-app.command"
+                if cmd_path.exists():
+                    subprocess.Popen(["open", str(cmd_path)], cwd=str(root_dir))
+                else:
+                    subprocess.Popen([sys.executable, "-m", "face_mosaic.gui.app"], cwd=str(root_dir))
+            else:
+                subprocess.Popen([sys.executable, "-m", "face_mosaic.gui.app"], cwd=str(root_dir))
+        except Exception as e:
+            print(f"[Auto-Restart Error] Failed to restart application: {e}")
+        finally:
+            QApplication.instance().quit()
 
 
 
