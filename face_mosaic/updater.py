@@ -52,48 +52,83 @@ def is_git_repository(project_root: Optional[Path] = None) -> bool:
 
 def check_for_updates(current_version: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
-    Query GitHub API for the latest release.
+    Query GitHub for the latest release with an automatic HTML redirect fallback
+    if the unauthenticated GitHub API rate limit (HTTP 403) is encountered.
     Returns a dict with release details if a newer version is available, else None.
     """
     cur_ver = current_version or __version__
+    tag_name = ""
+    asset_url = None
+    title = ""
+    body = ""
+    html_url = ""
+    published_at = ""
+
+    # Primary method: GitHub REST API
     req = urllib.request.Request(
         GITHUB_API_LATEST_RELEASE,
         headers={"User-Agent": f"auto-mosaic-updater/{cur_ver}"}
     )
+    api_success = False
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
-            if response.status != 200:
-                return None
-            data = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        # Network unreachable, GitHub rate limit, or offline - fail quietly
-        return None
+            if response.status == 200:
+                data = json.loads(response.read().decode("utf-8"))
+                tag_name = data.get("tag_name", "")
+                title = data.get("name") or tag_name
+                body = data.get("body", "")
+                html_url = data.get("html_url", "")
+                published_at = data.get("published_at", "")
+                api_success = True
 
-    tag_name = data.get("tag_name", "")
+                if sys.platform == "win32":
+                    target_asset_names = ["auto-mosaic-windows.zip"]
+                else:
+                    target_asset_names = ["auto-mosaic-macos.zip", "auto-mosaic-macos.tar.gz"]
+
+                for asset in data.get("assets", []):
+                    if asset.get("name") in target_asset_names:
+                        asset_url = asset.get("browser_download_url")
+                        break
+    except Exception:
+        pass
+
+    # Fallback method: When API rate limit (403) or error occurs, resolve via web redirect
+    if not api_success or not tag_name:
+        try:
+            web_url = f"https://github.com/{GITHUB_REPO}/releases/latest"
+            web_req = urllib.request.Request(
+                web_url,
+                headers={"User-Agent": f"Mozilla/5.0 (compatible; auto-mosaic/{cur_ver})"}
+            )
+            with urllib.request.urlopen(web_req, timeout=7) as resp:
+                final_url = resp.geturl()
+            extracted_tag = final_url.rstrip("/").split("/")[-1]
+            if extracted_tag and extracted_tag != "latest":
+                tag_name = extracted_tag
+                title = tag_name
+                html_url = final_url
+                asset_name = "auto-mosaic-windows.zip" if sys.platform == "win32" else "auto-mosaic-macos.zip"
+                asset_url = f"https://github.com/{GITHUB_REPO}/releases/download/{tag_name}/{asset_name}"
+        except Exception:
+            return None
+
     if not tag_name:
         return None
 
     if is_newer_version(tag_name, cur_ver):
-        # Find matching asset for current platform
-        if sys.platform == "win32":
-            target_asset_names = ["auto-mosaic-windows.zip"]
-        else:
-            target_asset_names = ["auto-mosaic-macos.zip", "auto-mosaic-macos.tar.gz"]
-
-        asset_url = None
-        for asset in data.get("assets", []):
-            if asset.get("name") in target_asset_names:
-                asset_url = asset.get("browser_download_url")
-                break
+        if not asset_url:
+            asset_name = "auto-mosaic-windows.zip" if sys.platform == "win32" else "auto-mosaic-macos.zip"
+            asset_url = f"https://github.com/{GITHUB_REPO}/releases/download/{tag_name}/{asset_name}"
 
         return {
             "version": tag_name.lstrip("vV"),
             "tag_name": tag_name,
-            "title": data.get("name") or tag_name,
-            "body": data.get("body", ""),
-            "html_url": data.get("html_url", ""),
+            "title": title or tag_name,
+            "body": body,
+            "html_url": html_url or f"https://github.com/{GITHUB_REPO}/releases/tag/{tag_name}",
             "asset_url": asset_url,
-            "published_at": data.get("published_at", ""),
+            "published_at": published_at,
             "is_newer": True
         }
 
