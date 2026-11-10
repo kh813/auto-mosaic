@@ -19,7 +19,7 @@ class FaceBlurrer:
         shape: str = "ellipse",  # "ellipse" (round), "circle", or "rect"
         plate_margin_x: float = 0.15,
         plate_margin_y: float = 0.15,
-        plate_shape: str = "rect"
+        plate_shape: str = "rounded_rect"  # "rounded_rect" (default: corner-rounded with soft edges), "ellipse", or "rect"
     ):
         self.blur_type = blur_type.lower()
         self.strength = strength if strength % 2 == 1 else strength + 1  # ensure odd
@@ -109,6 +109,10 @@ class FaceBlurrer:
         """
         Generate smooth, soft-feathered gradient alpha mask (0.0 to 1.0).
         Blends gently into the background to eliminate harsh, conspicuous boundaries.
+        Supports:
+        - "ellipse" / "round" / "circle": soft-feathered ellipse
+        - "rounded_rect" / "round_rect" / "rounded_rectangle": rectangle with rounded corners and softened edges
+        - other shapes: soft feathered rectangle
         """
         if rh <= 0 or rw <= 0:
             return np.zeros((max(1, rh), max(1, rw)), dtype=np.float32)
@@ -126,8 +130,35 @@ class FaceBlurrer:
                 feather_ksize += 1
             feathered = cv2.GaussianBlur(ellipse_u8.astype(np.float32) / 255.0, (feather_ksize, feather_ksize), 0)
             return np.clip(feathered * 1.20, 0.0, 1.0)
+
+        elif shape in ("rounded_rect", "round_rect", "rounded_rectangle"):
+            # Rounded rectangle (角を少し丸めた長方形) with feathered/softened edges
+            mask_u8 = np.zeros((rh, rw), dtype=np.uint8)
+            pad = max(1, int(min(rh, rw) * 0.04))
+            radius = max(2, int(min(rh, rw) * 0.18))
+            radius = min(radius, (rh - 2 * pad) // 2, (rw - 2 * pad) // 2)
+
+            x1, y1 = pad, pad
+            x2, y2 = rw - pad, rh - pad
+
+            # Draw central cross rectangles
+            cv2.rectangle(mask_u8, (x1 + radius, y1), (x2 - radius, y2), 255, -1)
+            cv2.rectangle(mask_u8, (x1, y1 + radius), (x2, y2 - radius), 255, -1)
+            # Draw 4 corner circles
+            cv2.circle(mask_u8, (x1 + radius, y1 + radius), radius, 255, -1)
+            cv2.circle(mask_u8, (x2 - radius - 1, y1 + radius), radius, 255, -1)
+            cv2.circle(mask_u8, (x1 + radius, y2 - radius - 1), radius, 255, -1)
+            cv2.circle(mask_u8, (x2 - radius - 1, y2 - radius - 1), radius, 255, -1)
+
+            # Soft edge feathering (縁のぼかしを少し緩くする)
+            feather_ksize = max(3, int(min(rh, rw) * 0.12))
+            if feather_ksize % 2 == 0:
+                feather_ksize += 1
+            feathered = cv2.GaussianBlur(mask_u8.astype(np.float32) / 255.0, (feather_ksize, feather_ksize), 0)
+            return np.clip(feathered * 1.15, 0.0, 1.0)
+
         else:
-            # Soft-edged rectangle for license plates
+            # Soft-edged rectangle
             rect_u8 = np.zeros((rh, rw), dtype=np.uint8)
             pad_x = max(1, int(rw * 0.06))
             pad_y = max(1, int(rh * 0.06))
@@ -172,7 +203,7 @@ class FaceBlurrer:
             else:
                 blurred_roi = self.apply_gaussian_to_roi(roi)
 
-            if active_shape in ("ellipse", "round", "circle"):
+            if active_shape in ("ellipse", "round", "circle", "rounded_rect", "round_rect", "rounded_rectangle"):
                 # Soft feathered alpha mask to ensure edges blend seamlessly with no harsh boundary
                 alpha_2d = self.generate_feathered_mask(rh, rw, active_shape)
                 alpha = alpha_2d[:, :, None]

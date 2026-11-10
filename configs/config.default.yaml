@@ -22,7 +22,9 @@ plate_model:
   min_plate_size: 12             # Minimum license plate size (short side in pixels)
   margin_x: 0.15                 # Horizontal expansion ratio for license plate bounding box
   margin_y: 0.15                 # Vertical expansion ratio for license plate bounding box
-  shape: "rect"                  # Options: "rect" (recommended for rectangular plates) or "ellipse"
+  shape: "rounded_rect"          # Options: "rounded_rect" (recommended for plates with soft rounded edges), "rect", or "ellipse"
+  vehicle_model: "yolo11n.onnx"  # YOLOv11n vehicle validation model
+  require_vehicle: true          # Strictly validate that license plate is located on a detected vehicle
 
 # Tracking & temporal smoothing
 tracking:

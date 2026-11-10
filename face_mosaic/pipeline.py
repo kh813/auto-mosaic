@@ -16,6 +16,7 @@ from .config import AppConfig
 from .io_utils import probe_video, VideoReader, VideoWriter, PrefetchedVideoReader, build_output_path
 from .detector import SCRFDDetector
 from .plate_detector import LicensePlateDetector
+from .vehicle_detector import VehicleDetector
 from .tracker import FaceTracker
 from .blur import FaceBlurrer
 from .color import compute_color_difference
@@ -33,8 +34,11 @@ class ProcessingPipeline:
 
         self.detector: Optional[SCRFDDetector] = None
         self.plate_detector: Optional[LicensePlateDetector] = None
+        self.vehicle_detector: Optional[VehicleDetector] = None
         self.model_path = base_model_dir / config.model.name
         self.plate_model_path = base_model_dir / config.plate_model.name
+        v_name = getattr(config.plate_model, "vehicle_model", "yolo11n.onnx")
+        self.vehicle_model_path = base_model_dir / v_name
 
         # Selective Model Loading: Only load face detector if target includes faces
         if self.config.detect_faces:
@@ -56,8 +60,9 @@ class ProcessingPipeline:
                 nms_threshold=self.config.model.nms_threshold
             )
 
-        # Selective Model Loading: Only load license plate detector if target includes plates
+        # Selective Model Loading: Only load license plate and vehicle detector if target includes plates
         if self.config.detect_plates:
+            # 1. License Plate Model
             if not self.plate_model_path.exists():
                 candidates = sorted(list(base_model_dir.glob("*plate*.onnx")))
                 if candidates:
@@ -93,6 +98,33 @@ class ProcessingPipeline:
                 nms_threshold=self.config.plate_model.nms_threshold
             )
 
+            # 2. Vehicle Verification Detector (First detect vehicle, only blur if vehicle is present)
+            if getattr(self.config.plate_model, "require_vehicle", True):
+                if not self.vehicle_model_path.exists():
+                    try:
+                        from scripts.download_models import MODELS, download_file
+                        if v_name in MODELS:
+                            info_v = MODELS[v_name]
+                            print(f"Auto-downloading missing vehicle verification model: {v_name}...")
+                            download_file(
+                                info_v["url"],
+                                self.vehicle_model_path,
+                                fallback_url=info_v.get("fallback_url"),
+                                min_size=info_v.get("expected_min_size", 5_000_000)
+                            )
+                    except Exception as e:
+                        print(f"Warning: Auto-download of vehicle model failed: {e}")
+
+                if self.vehicle_model_path.exists():
+                    print(f"Loading Vehicle Verification Detector: {self.vehicle_model_path.name}")
+                    self.vehicle_detector = VehicleDetector(
+                        model_path=str(self.vehicle_model_path),
+                        conf_threshold=0.35,
+                        nms_threshold=0.45
+                    )
+                else:
+                    print("Warning: Vehicle verification model not available; running without vehicle spatial filtering.")
+
         self.blurrer = FaceBlurrer(
             blur_type=self.config.blur.type,
             strength=self.config.blur.strength,
@@ -102,7 +134,7 @@ class ProcessingPipeline:
             shape=getattr(self.config.blur, "shape", "ellipse"),
             plate_margin_x=getattr(self.config.plate_model, "margin_x", 0.15),
             plate_margin_y=getattr(self.config.plate_model, "margin_y", 0.15),
-            plate_shape=getattr(self.config.plate_model, "shape", "rect")
+            plate_shape=getattr(self.config.plate_model, "shape", "rounded_rect")
         )
 
     @property
@@ -111,7 +143,8 @@ class ProcessingPipeline:
         if self.config.detect_faces and self.detector is not None and hasattr(self.detector, "active_provider"):
             parts.append(f"Faces: {self.detector.active_provider}")
         if self.config.detect_plates and self.plate_detector is not None and hasattr(self.plate_detector, "active_provider"):
-            parts.append(f"Plates: {self.plate_detector.active_provider}")
+            v_p = f", Vehicle: {self.vehicle_detector.active_provider}" if self.vehicle_detector else ""
+            parts.append(f"Plates: {self.plate_detector.active_provider}{v_p}")
         return " | ".join(parts) if parts else "CPU"
 
     def process_video(
@@ -273,10 +306,34 @@ class ProcessingPipeline:
                             ])
 
                         if self.config.detect_plates and self.plate_detector is not None:
-                            try:
-                                plate_dets = self.plate_detector.detect(frame, orig_shape=(out_height, out_width))
-                            except TypeError:
-                                plate_dets = self.plate_detector.detect(frame)
+                            # 1. First detect vehicles in the frame (if vehicle validation is enabled)
+                            vehicle_boxes = []
+                            if self.vehicle_detector is not None:
+                                try:
+                                    vehicle_boxes = self.vehicle_detector.detect(frame, orig_shape=(out_height, out_width))
+                                except TypeError:
+                                    vehicle_boxes = self.vehicle_detector.detect(frame)
+
+                                # 2. If no vehicles are found in the frame, license plates cannot exist
+                                if len(vehicle_boxes) == 0:
+                                    plate_dets = []
+                                else:
+                                    try:
+                                        raw_plates = self.plate_detector.detect(frame, orig_shape=(out_height, out_width))
+                                    except TypeError:
+                                        raw_plates = self.plate_detector.detect(frame)
+
+                                    # 3. Only keep plates that belong to a detected vehicle
+                                    plate_dets = [
+                                        p for p in raw_plates
+                                        if self.vehicle_detector.is_plate_on_vehicle(p.bbox, vehicle_boxes, orig_h=out_height)
+                                    ]
+                            else:
+                                try:
+                                    plate_dets = self.plate_detector.detect(frame, orig_shape=(out_height, out_width))
+                                except TypeError:
+                                    plate_dets = self.plate_detector.detect(frame)
+
                             valid_dets.extend([
                                 d for d in plate_dets
                                 if min(d.width, d.height) >= self.config.plate_model.min_plate_size

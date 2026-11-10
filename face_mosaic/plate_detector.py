@@ -228,9 +228,9 @@ class LicensePlateDetector(BaseFaceDetector):
                 continue
 
             # 1. Vertical position check: Vehicle license plates are strictly located in the lower half of the frame (road level).
-            # Reject any candidate whose center is located in the upper 45% (station signs, platform boards, billboards, street banners).
+            # Reject any candidate whose center is located in the upper 50% (station signs, platform boards, billboards, street banners).
             cy = (b[1] + b[3]) * 0.5
-            if cy < (orig_h * 0.45):
+            if cy < (orig_h * 0.50):
                 continue
 
             # 2. Maximum height check: license plates on vehicles never occupy > 20% of total video height.

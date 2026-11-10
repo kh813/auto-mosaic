@@ -35,6 +35,12 @@ MODELS = {
         "description": "YOLOv11n License Plate Detection ONNX model (Fast & Accurate)",
         "expected_min_size": 8_000_000,
     },
+    "yolo11n.onnx": {
+        "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx",
+        "fallback_url": "https://huggingface.co/ultralytics/yolo11/resolve/main/yolo11n.onnx",
+        "description": "YOLOv11n Vehicle / Object Detection ONNX model for plate verification",
+        "expected_min_size": 8_000_000,
+    },
 }
 
 def download_file(url: str, target_path: Path, fallback_url: str = None, min_size: int = 1_000_000) -> bool:

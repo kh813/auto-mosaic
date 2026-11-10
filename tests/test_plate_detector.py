@@ -159,6 +159,7 @@ def test_pipeline_plates_only_and_both_e2e(tmp_path):
     # Plates-only run with mocked plate_detector
     cfg = AppConfig()
     cfg.target = "plates"
+    cfg.plate_model.require_vehicle = False
     cfg.output.codec = "h264"
     cfg.output.preset = "ultrafast"
     pipeline = ProcessingPipeline(cfg)

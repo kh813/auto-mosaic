@@ -18,12 +18,14 @@ class ModelConfig:
 @dataclass
 class PlateModelConfig:
     name: str = "license-plate-finetune-v1n.onnx"
+    vehicle_model: str = "yolo11n.onnx"
+    require_vehicle: bool = True  # First detect vehicle, only blur plates on detected vehicles
     conf_threshold: float = 0.40
     nms_threshold: float = 0.45
     min_plate_size: int = 12
     margin_x: float = 0.15
     margin_y: float = 0.15
-    shape: str = "rect"  # "rect" (recommended for rectangular plates) or "ellipse"
+    shape: str = "rounded_rect"  # "rounded_rect" (recommended for plates), "ellipse", or "rect"
 
 @dataclass
 class TrackingConfig:
