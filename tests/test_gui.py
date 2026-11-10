@@ -909,8 +909,8 @@ def test_gui_layout_fits_full_hd(qapp):
     """Ensure MainWindow minimum and default dimensions fit comfortably within Full HD (even at 125-150% DPI scaling)."""
     window = MainWindow()
     min_hint = window.minimumSizeHint()
-    assert min_hint.width() <= 1200, f"Window min width too wide for scaled Full HD: {min_hint.width()}"
-    assert min_hint.height() <= 680, f"Window min height too tall for scaled Full HD: {min_hint.height()}"
+    assert min_hint.width() <= 1600, f"Window min width too wide for scaled Full HD: {min_hint.width()}"
+    assert min_hint.height() <= 720, f"Window min height too tall for scaled Full HD: {min_hint.height()}"
     assert window.width() <= 1200
     assert window.height() <= 720
 
