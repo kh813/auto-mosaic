@@ -227,8 +227,14 @@ class LicensePlateDetector(BaseFaceDetector):
             if not (1.25 <= ar <= 2.70):
                 continue
 
-            # Reject overhead ceiling signs (typically hanging at the top 22% of the frame with high aspect ratio)
-            if b[3] < (orig_h * 0.22) and ar > 2.1:
+            # 1. Vertical position check: Vehicle license plates are strictly located in the lower half of the frame (road level).
+            # Reject any candidate whose center is located in the upper 45% (station signs, platform boards, billboards, street banners).
+            cy = (b[1] + b[3]) * 0.5
+            if cy < (orig_h * 0.45):
+                continue
+
+            # 2. Maximum height check: license plates on vehicles never occupy > 20% of total video height.
+            if bh_real > (orig_h * 0.20):
                 continue
 
             results.append(FaceDetection(

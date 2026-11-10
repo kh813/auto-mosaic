@@ -83,11 +83,65 @@ class FaceBlurrer:
         if ksize < 3:
             ksize = 3
             
-        return cv2.GaussianBlur(roi, (ksize, ksize), 0)
+        blurred = cv2.GaussianBlur(roi, (ksize, ksize), 0)
+
+        # Prevent darkening: preserve central face/plate natural luminance.
+        # Strong blurs cause dark hair or dark surroundings to bleed into the face,
+        # creating an unnatural blackish/muddy patch. We maintain central brightness.
+        ch_y1, ch_y2 = int(h * 0.20), int(h * 0.80)
+        ch_x1, ch_x2 = int(w * 0.20), int(w * 0.80)
+        if ch_y2 > ch_y1 and ch_x2 > ch_x1:
+            orig_center = roi[ch_y1:ch_y2, ch_x1:ch_x2].astype(np.float32)
+            blur_center = blurred[ch_y1:ch_y2, ch_x1:ch_x2].astype(np.float32)
+            orig_mean = np.mean(orig_center, axis=(0, 1))
+            blur_mean = np.mean(blur_center, axis=(0, 1))
+
+            # If blurred center is darker than original, lift brightness to preserve original color tone
+            diff = orig_mean - blur_mean
+            if np.any(diff > 3.0):
+                lift = np.maximum(0.0, diff * 0.85)
+                lifted = np.clip(blurred.astype(np.float32) + lift, 0.0, 255.0).astype(np.uint8)
+                return lifted
+
+        return blurred
+
+    def generate_feathered_mask(self, rh: int, rw: int, shape: str) -> np.ndarray:
+        """
+        Generate smooth, soft-feathered gradient alpha mask (0.0 to 1.0).
+        Blends gently into the background to eliminate harsh, conspicuous boundaries.
+        """
+        if rh <= 0 or rw <= 0:
+            return np.zeros((max(1, rh), max(1, rw)), dtype=np.float32)
+
+        if shape in ("ellipse", "round", "circle"):
+            # Solid core ellipse surrounded by gentle gradient feather
+            ellipse_u8 = np.zeros((rh, rw), dtype=np.uint8)
+            center = (rw // 2, rh // 2)
+            axes = (max(1, int(rw * 0.44)), max(1, int(rh * 0.44)))
+            cv2.ellipse(ellipse_u8, center, axes, 0, 0, 360, 255, -1, lineType=cv2.LINE_AA)
+
+            # Soft feathering via Gaussian blur
+            feather_ksize = max(5, int(min(rh, rw) * 0.22))
+            if feather_ksize % 2 == 0:
+                feather_ksize += 1
+            feathered = cv2.GaussianBlur(ellipse_u8.astype(np.float32) / 255.0, (feather_ksize, feather_ksize), 0)
+            return np.clip(feathered * 1.20, 0.0, 1.0)
+        else:
+            # Soft-edged rectangle for license plates
+            rect_u8 = np.zeros((rh, rw), dtype=np.uint8)
+            pad_x = max(1, int(rw * 0.06))
+            pad_y = max(1, int(rh * 0.06))
+            rect_u8[pad_y:max(pad_y + 1, rh - pad_y), pad_x:max(pad_x + 1, rw - pad_x)] = 255
+
+            feather_ksize = max(3, int(min(rh, rw) * 0.14))
+            if feather_ksize % 2 == 0:
+                feather_ksize += 1
+            feathered = cv2.GaussianBlur(rect_u8.astype(np.float32) / 255.0, (feather_ksize, feather_ksize), 0)
+            return np.clip(feathered * 1.15, 0.0, 1.0)
 
     def apply_blur(self, frame: np.ndarray, bboxes: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Apply blur/mosaic to frame at specified bboxes using round (ellipse) or rectangular shape.
+        Apply blur/mosaic to frame at specified bboxes using feathered soft-edge blending.
         Returns:
             (processed_frame, mask)
             where mask is a uint8 binary image (255 where blurred, 0 elsewhere).
@@ -119,16 +173,17 @@ class FaceBlurrer:
                 blurred_roi = self.apply_gaussian_to_roi(roi)
 
             if active_shape in ("ellipse", "round", "circle"):
-                # Generate smooth anti-aliased elliptical/circular mask
-                ellipse_mask = np.zeros((rh, rw), dtype=np.uint8)
-                center = (rw // 2, rh // 2)
-                axes = (rw // 2, rh // 2)
-                cv2.ellipse(ellipse_mask, center, axes, 0, 0, 360, 255, -1, lineType=cv2.LINE_AA)
+                # Soft feathered alpha mask to ensure edges blend seamlessly with no harsh boundary
+                alpha_2d = self.generate_feathered_mask(rh, rw, active_shape)
+                alpha = alpha_2d[:, :, None]
 
-                # Smooth alpha blending along the boundary
-                alpha = (ellipse_mask.astype(np.float32) / 255.0)[:, :, None]
-                out_frame[y1:y2, x1:x2] = (blurred_roi.astype(np.float32) * alpha + roi.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
-                mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], ellipse_mask)
+                # Blend softly with original video frame
+                blended = (blurred_roi.astype(np.float32) * alpha + roi.astype(np.float32) * (1.0 - alpha))
+                out_frame[y1:y2, x1:x2] = np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+                # Mask tracking (scale to uint8)
+                mask_roi = (alpha_2d * 255.0).astype(np.uint8)
+                mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], mask_roi)
             else:
                 out_frame[y1:y2, x1:x2] = blurred_roi
                 mask[y1:y2, x1:x2] = 255
