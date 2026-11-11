@@ -27,61 +27,48 @@ def compute_iou(box1: np.ndarray, box2: np.ndarray) -> float:
 
     return inter / union if union > 0 else 0.0
 
-def compute_track_match_score(box_a: np.ndarray, box_b: np.ndarray) -> float:
+def compute_track_match_score(
+    box_a: np.ndarray,
+    box_b: np.ndarray,
+    dt: int = 1,
+    is_plate: bool = False
+) -> float:
     """
     Compute matching affinity between a tracklet box (predicted or latest) and a detection box.
-    Combines:
-    1. Standard Intersection over Union (IoU)
-    2. Distance-IoU (DIoU) awareness for close objects with small/zero overlap
-    3. Center-distance soft matching with adaptive search radius for fast-moving targets (bicycles, vehicles).
+    Enforces strict spatial consistency to prevent tracking jumps between adjacent faces or vehicles.
     """
     iou = compute_iou(box_a, box_b)
     if iou >= 0.20:
         return max(iou, 0.35 + 0.65 * iou)
+    if iou >= 0.05:
+        return max(iou, 0.25 + 0.50 * iou)
 
-    # Center distance & scale consistency check for fast moving faces / plates
+    # For zero or near-zero overlap (iou < 0.05):
+    # If consecutive frames (dt <= 1), zero-overlap detections are distinct objects (different faces/cars)
+    if dt <= 1 or is_plate:
+        return 0.0
+
+    # For human faces across missed frames (dt > 1):
     w1, h1 = box_a[2] - box_a[0], box_a[3] - box_a[1]
     w2, h2 = box_b[2] - box_b[0], box_b[3] - box_b[1]
     if w1 <= 0 or h1 <= 0 or w2 <= 0 or h2 <= 0:
         return 0.0
 
+    scale_ratio = (w2 * h2) / (w1 * h1)
+    if not (0.35 <= scale_ratio <= 3.0):
+        return 0.0
+
     c1_x, c1_y = (box_a[0] + box_a[2]) / 2.0, (box_a[1] + box_a[3]) / 2.0
     c2_x, c2_y = (box_b[0] + box_b[2]) / 2.0, (box_b[1] + box_b[3]) / 2.0
     dist = np.hypot(c1_x - c2_x, c1_y - c2_y)
+
     diag = np.hypot(max(w1, w2), max(h1, h2))
+    max_dist = diag * (0.6 + 0.5 * min(dt, 4))
+    if dist < max_dist:
+        score = 0.25 + 0.25 * (1.0 - dist / max_dist)
+        return score
 
-    # Scale consistency: ratio of bounding box areas
-    scale_ratio = (w2 * h2) / (w1 * h1)
-    if not (0.25 <= scale_ratio <= 4.0):
-        return iou
-
-    # Adaptive search radius: accommodates rapid motion of cyclists and vehicles
-    # (allows tracking when object moves up to 2.5x diagonal or minimum 140px)
-    max_search_dist = max(diag * 2.5, 140.0)
-
-    if dist < max_search_dist:
-        # Distance affinity mapped smoothly to [0.25, 0.55]
-        norm_dist = dist / max_search_dist
-        dist_affinity = 0.25 + 0.30 * (1.0 - norm_dist)
-        
-        # Penalize large scale difference slightly
-        scale_penalty = min(abs(np.log(scale_ratio)), 1.0) * 0.08
-        dist_affinity = max(0.0, dist_affinity - scale_penalty)
-
-        # DIoU component: smallest enclosing box diagonal
-        enc_x1 = min(box_a[0], box_b[0])
-        enc_y1 = min(box_a[1], box_b[1])
-        enc_x2 = max(box_a[2], box_b[2])
-        enc_y2 = max(box_a[3], box_b[3])
-        c_diag = np.hypot(enc_x2 - enc_x1, enc_y2 - enc_y1)
-        if c_diag > 0:
-            diou_penalty = (dist / c_diag) ** 2
-            diou_score = max(0.0, 0.45 - 0.25 * diou_penalty)
-            return max(iou, dist_affinity, diou_score)
-
-        return max(iou, dist_affinity)
-
-    return iou
+    return 0.0
 
 class Tracklet:
     def __init__(self, track_id: int, start_frame: int, detection: FaceDetection, crop: Optional[np.ndarray]):
@@ -137,11 +124,10 @@ class Tracklet:
         else:
             delta = (self.frames[recent_keys[-1]] - self.frames[recent_keys[0]]) / float(dt)
 
-        # Realistic velocity cap for fast moving objects (bicycles, cars, runners):
-        # Allow up to 2.0x object size or minimum 180px per frame (accommodates 4K/FHD motion)
+        # Realistic velocity cap: no face or plate jumps > 0.5x its size in a single frame (33ms)
         w = max(1.0, self.latest_bbox[2] - self.latest_bbox[0])
         h = max(1.0, self.latest_bbox[3] - self.latest_bbox[1])
-        max_v = max(max(w, h) * 2.0, 180.0)
+        max_v = max(min(w, h) * 0.50, 15.0)
         return np.clip(delta, -max_v, max_v)
 
     def predict_bbox(self, target_frame: int) -> np.ndarray:
@@ -284,14 +270,16 @@ class FaceTracker:
             # Anchor 2: latest observed bbox (classic legacy anchor, robust against turns, stops, and initial acceleration)
             ious = np.zeros((len(self.active_tracks), len(detections)), dtype=np.float32)
             for t_idx, track in enumerate(self.active_tracks):
+                is_plate = (getattr(track, "label", "face") == "plate")
                 pred_box = track.predict_bbox(frame_idx)
                 latest_box = track.latest_bbox
+                dt = max(1, frame_idx - track.last_frame)
                 for d_idx, det in enumerate(detections):
                     det_label = getattr(det, "label", "face")
                     if det_label != track.label:
                         continue
-                    score_pred = compute_track_match_score(pred_box, det.bbox)
-                    score_latest = compute_track_match_score(latest_box, det.bbox)
+                    score_pred = compute_track_match_score(pred_box, det.bbox, dt=dt, is_plate=is_plate)
+                    score_latest = compute_track_match_score(latest_box, det.bbox, dt=dt, is_plate=is_plate)
                     ious[t_idx, d_idx] = max(score_pred, score_latest)
 
             # Greedy matching
@@ -334,14 +322,13 @@ class FaceTracker:
         for t_idx, track in enumerate(self.active_tracks):
             missing = frame_idx - track.last_frame
             if track.is_out_of_frame(frame_w, frame_h):
-                if missing > max(4, int(self.max_missing_frames * 0.4)):
+                if missing > max(3, int(self.max_missing_frames * 0.3)):
                     self.finished_tracks.append(track)
                 else:
                     still_active.append(track)
             else:
-                # Subject is still inside screen canvas! Persist tracking.
-                max_persist = int(self.max_missing_frames * 2.5)
-                if missing > max_persist:
+                # Retire track after max_missing_frames so it never lingers as a zombie
+                if missing > self.max_missing_frames:
                     self.finished_tracks.append(track)
                 else:
                     still_active.append(track)
@@ -479,47 +466,34 @@ class FaceTracker:
                 active_pad_back = self.padding_backward
                 active_pad_fwd = self.padding_forward
 
-            vel = track.get_velocity()
+            # Apply backward padding (before start): stationary hold with safety margin (no phantom velocity drift)
             start_bbox = track.frames[min_f]
-            has_velocity = np.any(np.abs(vel) > 1.0)
-
-            # Apply backward padding (before start)
+            w_start = max(1.0, start_bbox[2] - start_bbox[0])
+            h_start = max(1.0, start_bbox[3] - start_bbox[1])
+            pad_back_box = np.array([
+                max(0.0, start_bbox[0] - w_start * 0.05),
+                max(0.0, start_bbox[1] - h_start * 0.05),
+                min(float(img_w), start_bbox[2] + w_start * 0.05),
+                min(float(img_h), start_bbox[3] + h_start * 0.05)
+            ], dtype=np.float32)
             for pad_i in range(1, active_pad_back + 1):
                 target_f = min_f - pad_i
                 if 0 <= target_f < total_frames:
-                    if has_velocity and num_detections >= 3:
-                        decay = 0.95 ** pad_i
-                        extrapolated = start_bbox - vel * (pad_i * decay)
-                        w = max(1.0, extrapolated[2] - extrapolated[0])
-                        h = max(1.0, extrapolated[3] - extrapolated[1])
-                        pad_box = np.array([
-                            max(0.0, extrapolated[0] - w * 0.05),
-                            max(0.0, extrapolated[1] - h * 0.05),
-                            min(float(img_w), extrapolated[2] + w * 0.05),
-                            min(float(img_h), extrapolated[3] + h * 0.05)
-                        ], dtype=np.float32)
-                        frame_map[target_f].append(_tag_bbox(pad_box))
-                    else:
-                        frame_map[target_f].append(_tag_bbox(start_bbox))
+                    frame_map[target_f].append(_tag_bbox(pad_back_box))
 
-            # Apply forward padding (after end) with velocity extrapolation & safety margin
+            # Apply forward padding (after end): stationary hold with safety margin (no phantom velocity drift)
             end_bbox = track.frames[max_f]
+            w_end = max(1.0, end_bbox[2] - end_bbox[0])
+            h_end = max(1.0, end_bbox[3] - end_bbox[1])
+            pad_fwd_box = np.array([
+                max(0.0, end_bbox[0] - w_end * 0.05),
+                max(0.0, end_bbox[1] - h_end * 0.05),
+                min(float(img_w), end_bbox[2] + w_end * 0.05),
+                min(float(img_h), end_bbox[3] + h_end * 0.05)
+            ], dtype=np.float32)
             for pad_i in range(1, active_pad_fwd + 1):
                 target_f = max_f + pad_i
                 if 0 <= target_f < total_frames:
-                    if has_velocity and num_detections >= 2:
-                        decay = 0.96 ** pad_i
-                        extrapolated = end_bbox + vel * (pad_i * decay)
-                        w = max(1.0, extrapolated[2] - extrapolated[0])
-                        h = max(1.0, extrapolated[3] - extrapolated[1])
-                        pad_box = np.array([
-                            max(0.0, extrapolated[0] - w * 0.05),
-                            max(0.0, extrapolated[1] - h * 0.05),
-                            min(float(img_w), extrapolated[2] + w * 0.05),
-                            min(float(img_h), extrapolated[3] + h * 0.05)
-                        ], dtype=np.float32)
-                        frame_map[target_f].append(_tag_bbox(pad_box))
-                    else:
-                        frame_map[target_f].append(_tag_bbox(end_bbox))
+                    frame_map[target_f].append(_tag_bbox(pad_fwd_box))
 
         return frame_map

@@ -28,10 +28,10 @@ plate_model:
 
 # Tracking & temporal smoothing
 tracking:
-  iou_threshold: 0.3             # IoU threshold for matching face tracklets
-  max_missing_frames: 16         # Number of missing frames before track is dropped (at 30fps)
-  padding_backward: 12           # Number of frames to extend blur backward (at 30fps)
-  padding_forward: 24            # Number of frames to extend blur forward after face disappearance (at 30fps)
+  iou_threshold: 0.25            # Strict spatial IoU threshold for matching tracklets
+  max_missing_frames: 10         # Number of missing frames before track is dropped (at 30fps)
+  padding_backward: 4            # Number of frames to extend blur backward safely (stationary hold)
+  padding_forward: 8             # Number of frames to extend blur forward after face disappearance (at 30fps)
   auto_scale_by_fps: true        # Automatically scale padding & missing frames based on video FPS (e.g. 60/120/240fps)
   base_fps: 30.0                 # Reference FPS baseline for the padding frame settings
 

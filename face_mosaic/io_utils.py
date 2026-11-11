@@ -306,81 +306,51 @@ class VideoReader:
         self.cap = None
         self.process = None
 
-        # Full resolution decoding (Pass 2): native hardware acceleration via cv2.VideoCapture
-        if scale is None:
-            try:
-                cap = cv2.VideoCapture(self.filepath)
-                if cap.isOpened():
-                    self.cap = cap
-            except Exception:
-                self.cap = None
-
-        if self.cap is None:
-            # Multithreaded FFmpeg decode pipe (supports arbitrary scaling filters)
-            ffmpeg_bin = get_ffmpeg_cmd()
-            cmd = [
-                ffmpeg_bin,
-                "-v", "error",
-                "-threads", "0",
-                "-i", self.filepath,
-            ]
-            if scale is not None:
-                cmd.extend(["-vf", f"scale={self.out_width}:{self.out_height}"])
-            cmd.extend([
-                "-f", "rawvideo",
-                "-pix_fmt", "bgr24",
-                "pipe:1"
-            ])
-            try:
-                self.process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=10**8,
-                    **get_subprocess_kwargs()
-                )
-            except FileNotFoundError:
-                raise RuntimeError(
-                    f"ffmpeg executable not found ('{ffmpeg_bin}'). "
-                    f"Please ensure FFmpeg is installed and added to PATH or placed in the bin/ directory."
-                )
-            self.frame_size = self.out_width * self.out_height * 3
+        # Multithreaded FFmpeg decode pipe:
+        # Guarantees 100% frame-by-frame exact determinism between Pass 1 and Pass 2,
+        # preventing MSMF/OpenCV timing drift and VFR frame misalignments.
+        ffmpeg_bin = get_ffmpeg_cmd()
+        cmd = [
+            ffmpeg_bin,
+            "-v", "error",
+            "-threads", "0",
+            "-i", self.filepath,
+        ]
+        if scale is not None:
+            cmd.extend(["-vf", f"scale={self.out_width}:{self.out_height}"])
+        cmd.extend([
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "pipe:1"
+        ])
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=10**8,
+                **get_subprocess_kwargs()
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"ffmpeg executable not found ('{ffmpeg_bin}'). "
+                f"Please ensure FFmpeg is installed and added to PATH or placed in the bin/ directory."
+            )
+        self.frame_size = self.out_width * self.out_height * 3
 
     def __iter__(self) -> Generator[np.ndarray, None, None]:
-        if self.cap is not None:
-            while self.cap is not None and self.cap.isOpened():
-                try:
-                    ret, frame = self.cap.read()
-                except Exception:
-                    break
-                if not ret or frame is None:
-                    break
-                # Safeguard if OpenCV backend did not auto-rotate portrait metadata
-                if frame.shape[0] != self.out_height or frame.shape[1] != self.out_width:
-                    if frame.shape[0] == self.out_width and frame.shape[1] == self.out_height:
-                        if self.info.rotation in (90, -270):
-                            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-                        elif self.info.rotation in (-90, 270):
-                            frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-                    if frame.shape[0] != self.out_height or frame.shape[1] != self.out_width:
-                        frame = cv2.resize(frame, (self.out_width, self.out_height), interpolation=cv2.INTER_LINEAR)
-                yield frame
-        else:
-            while True:
-                raw_bytes = self.process.stdout.read(self.frame_size)
-                if not raw_bytes or len(raw_bytes) < self.frame_size:
-                    ret = self.process.poll()
-                    if ret is not None and ret != 0:
-                        err = self.process.stderr.read().decode('utf-8', errors='replace')
-                        raise RuntimeError(f"FFmpeg read error (code {ret}): {err}")
-                    break
-                frame = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((self.out_height, self.out_width, 3))
-                yield frame
+        while True:
+            raw_bytes = self.process.stdout.read(self.frame_size)
+            if not raw_bytes or len(raw_bytes) < self.frame_size:
+                ret = self.process.poll()
+                if ret is not None and ret != 0:
+                    err = self.process.stderr.read().decode('utf-8', errors='replace')
+                    raise RuntimeError(f"FFmpeg read error (code {ret}): {err}")
+                break
+            frame = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((self.out_height, self.out_width, 3))
+            yield frame
 
     def close(self):
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
         if self.process:
             self.process.stdout.close()
             self.process.wait()

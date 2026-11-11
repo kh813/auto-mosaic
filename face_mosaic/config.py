@@ -29,10 +29,10 @@ class PlateModelConfig:
 
 @dataclass
 class TrackingConfig:
-    iou_threshold: float = 0.3
-    max_missing_frames: int = 16
-    padding_backward: int = 12
-    padding_forward: int = 24
+    iou_threshold: float = 0.25
+    max_missing_frames: int = 10
+    padding_backward: int = 4
+    padding_forward: int = 8
     auto_scale_by_fps: bool = True
     base_fps: float = 30.0
 

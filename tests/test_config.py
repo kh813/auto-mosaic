@@ -14,9 +14,9 @@ def test_default_config():
     assert config.plate_model.conf_threshold == pytest.approx(0.40)
     assert config.plate_model.shape == "rounded_rect"
     assert config.blur.type == "gaussian"
-    assert config.tracking.padding_backward == 12
-    assert config.tracking.padding_forward == 24
-    assert config.tracking.max_missing_frames == 16
+    assert config.tracking.padding_backward == 4
+    assert config.tracking.padding_forward == 8
+    assert config.tracking.max_missing_frames == 10
     assert config.output.codec == "auto"
     assert config.output.crf == 23
     assert config.output.bit_depth == "auto"
