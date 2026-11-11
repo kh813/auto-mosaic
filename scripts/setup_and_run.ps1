@@ -14,6 +14,7 @@ Set-Location $rootDir
 
 # Ensure Python operates in UTF-8 mode regardless of system locale/code page
 $env:PYTHONUTF8 = "1"
+$env:PYTHONPATH = "$rootDir;$env:PYTHONPATH"
 
 try {
     Write-Host "==========================================================" -ForegroundColor Cyan
@@ -129,6 +130,15 @@ if ($needVenvSetup) {
     }
 }
 
+# Ensure rootDir is added to venv site-packages via .pth file
+$sitePackages = Join-Path $rootDir "venv\Lib\site-packages"
+if (Test-Path $sitePackages) {
+    $pthFile = Join-Path $sitePackages "auto_mosaic.pth"
+    if (-not (Test-Path $pthFile)) {
+        Set-Content -Path $pthFile -Value $rootDir -Encoding ASCII
+    }
+}
+
 # 2. Check or Setup FFmpeg
 Write-Host "`n[2/4] Checking FFmpeg / FFprobe..." -ForegroundColor Yellow
 $binDir = Join-Path $rootDir "bin"
@@ -193,7 +203,7 @@ if ($AppArgs -and $AppArgs.Count -gt 0) {
         $venvPythonw = $venvPython
     }
     # Start GUI detached with pythonw (splash screen handles startup feedback)
-    Start-Process -FilePath $venvPythonw -ArgumentList @("-m", "face_mosaic.gui.app") -WorkingDirectory $rootDir
+    Start-Process -FilePath $venvPythonw -ArgumentList @("-m", "face_mosaic.gui") -WorkingDirectory $rootDir
 }
 } catch {
     $errMsg = $_.Exception.Message
