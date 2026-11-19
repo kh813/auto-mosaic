@@ -109,3 +109,72 @@ def test_padding_does_not_drift_away_with_extrapolated_velocity():
     pad_f = frame_map[18][0]
     cx_fwd = (pad_f[0] + pad_f[2]) / 2.0
     assert abs(cx_fwd - 590.0) < 5.0, f"Forward padding shifted away to x={cx_fwd}"
+
+def test_moving_face_continuous_tracking_no_lagging_mosaic():
+    """
+    Verify that a moving face (e.g. running, walking, or camera pan where consecutive
+    frame overlap is near zero IoU < 0.05) remains in a single continuous tracklet,
+    and no orphaned/lagging stationary blur is left behind at the previous position.
+    """
+    tracker = FaceTracker(iou_threshold=0.25, max_missing_frames=16)
+    dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Face of size 60x60 moves 50px per frame (consecutive IoU < 0.05)
+    # Frame 0: x=100..160, center=130
+    # Frame 1: x=150..210, center=180
+    # Frame 2: x=200..260, center=230
+    detections_by_frame = {
+        0: [FaceDetection(bbox=np.array([100.0, 300.0, 160.0, 360.0]), score=0.92, label="face")],
+        1: [FaceDetection(bbox=np.array([150.0, 300.0, 210.0, 360.0]), score=0.92, label="face")],
+        2: [FaceDetection(bbox=np.array([200.0, 300.0, 260.0, 360.0]), score=0.92, label="face")],
+    }
+
+    for f in range(3):
+        tracker.update(f, dummy_frame, detections_by_frame[f])
+
+    tracker.finish()
+    # Must remain a single continuous track, not 3 fragmented tracks
+    assert len(tracker.finished_tracks) == 1, (
+        f"Expected 1 track for moving face, but got {len(tracker.finished_tracks)} tracks"
+    )
+
+    frame_map = tracker.get_frame_bboxes_map(total_frames=3, img_w=1920, img_h=1080)
+    # In each frame, there should be exactly 1 mosaic box directly on the face
+    for f in range(3):
+        assert len(frame_map[f]) == 1, f"Frame {f} should have exactly 1 box, got {len(frame_map[f])}"
+        b = frame_map[f][0]
+        cx = (b[0] + b[2]) / 2.0
+        expected_cx = 130.0 + f * 50.0
+        assert abs(cx - expected_cx) < 2.0, (
+            f"Frame {f} mosaic displaced! cx={cx}, expected={expected_cx}"
+        )
+
+def test_turning_head_missed_frames_interpolation():
+    """
+    Verify that when a person temporarily turns their head or looks away (missed for 3 frames),
+    the tracker seamlessly re-associates the face and linearly interpolates the missing frames
+    without losing the track or producing disconnected jumps.
+    """
+    tracker = FaceTracker(iou_threshold=0.25, max_missing_frames=16)
+    dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Frame 0: Detected at x=200..280 (center 240)
+    tracker.update(0, dummy_frame, [FaceDetection(bbox=np.array([200.0, 200.0, 280.0, 280.0]), score=0.9, label="face")])
+    # Frames 1-3: Head turned away, face missed
+    for f in range(1, 4):
+        tracker.update(f, dummy_frame, [])
+    # Frame 4: Head turns back at x=280..360 (center 320, moved 80px over 4 frames)
+    tracker.update(4, dummy_frame, [FaceDetection(bbox=np.array([280.0, 200.0, 360.0, 280.0]), score=0.9, label="face")])
+
+    tracker.finish()
+    # Must be recognized as the same person
+    assert len(tracker.finished_tracks) == 1
+
+    frame_map = tracker.get_frame_bboxes_map(total_frames=5, img_w=1920, img_h=1080)
+    # Verify all frames (including missed 1, 2, 3) are populated via linear interpolation
+    for f in range(5):
+        assert len(frame_map[f]) == 1, f"Frame {f} missing interpolated mosaic!"
+        b = frame_map[f][0]
+        cx = (b[0] + b[2]) / 2.0
+        expected_cx = 240.0 + f * 20.0  # (320 - 240) / 4 = 20px per frame
+        assert abs(cx - expected_cx) < 2.0, f"Frame {f} interpolation off: cx={cx}, expected={expected_cx}"

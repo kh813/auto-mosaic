@@ -35,7 +35,8 @@ def compute_track_match_score(
 ) -> float:
     """
     Compute matching affinity between a tracklet box (predicted or latest) and a detection box.
-    Enforces strict spatial consistency to prevent tracking jumps between adjacent faces or vehicles.
+    Enforces strict spatial consistency to prevent tracking jumps between adjacent vehicles,
+    while allowing smooth soft-matching across moving human faces to prevent track fragmentation.
     """
     iou = compute_iou(box_a, box_b)
     if iou >= 0.20:
@@ -44,18 +45,18 @@ def compute_track_match_score(
         return max(iou, 0.25 + 0.50 * iou)
 
     # For zero or near-zero overlap (iou < 0.05):
-    # If consecutive frames (dt <= 1), zero-overlap detections are distinct objects (different faces/cars)
-    if dt <= 1 or is_plate:
+    # License plates are rigid body markers on vehicles - never allow zero-overlap jumps between adjacent cars
+    if is_plate:
         return 0.0
 
-    # For human faces across missed frames (dt > 1):
+    # Human faces: check spatial consistency & scale continuity for moving subjects
     w1, h1 = box_a[2] - box_a[0], box_a[3] - box_a[1]
     w2, h2 = box_b[2] - box_b[0], box_b[3] - box_b[1]
     if w1 <= 0 or h1 <= 0 or w2 <= 0 or h2 <= 0:
         return 0.0
 
     scale_ratio = (w2 * h2) / (w1 * h1)
-    if not (0.35 <= scale_ratio <= 3.0):
+    if not (0.35 <= scale_ratio <= 2.8):
         return 0.0
 
     c1_x, c1_y = (box_a[0] + box_a[2]) / 2.0, (box_a[1] + box_a[3]) / 2.0
@@ -63,9 +64,12 @@ def compute_track_match_score(
     dist = np.hypot(c1_x - c2_x, c1_y - c2_y)
 
     diag = np.hypot(max(w1, w2), max(h1, h2))
-    max_dist = diag * (0.6 + 0.5 * min(dt, 4))
+    # Allowed search distance:
+    # At dt=1, allow motion up to 0.75x diagonal (smoothly accommodating walking/turning/panning without jumping to adjacent faces)
+    # Across missed frames (dt > 1), expand adaptively with dt
+    max_dist = diag * (0.75 + 0.50 * min(dt - 1, 4))
     if dist < max_dist:
-        score = 0.25 + 0.25 * (1.0 - dist / max_dist)
+        score = 0.30 + 0.35 * (1.0 - dist / max_dist)
         return score
 
     return 0.0
@@ -124,10 +128,15 @@ class Tracklet:
         else:
             delta = (self.frames[recent_keys[-1]] - self.frames[recent_keys[0]]) / float(dt)
 
-        # Realistic velocity cap: no face or plate jumps > 0.5x its size in a single frame (33ms)
+        # Velocity cap:
+        # Plates are rigid vehicular markers (cap at 0.6x size to prevent jumping)
+        # Faces can move rapidly during camera pans, walking, or running (allow up to 1.2x size)
         w = max(1.0, self.latest_bbox[2] - self.latest_bbox[0])
         h = max(1.0, self.latest_bbox[3] - self.latest_bbox[1])
-        max_v = max(min(w, h) * 0.50, 15.0)
+        if self.label == "plate":
+            max_v = max(min(w, h) * 0.60, 20.0)
+        else:
+            max_v = max(max(w, h) * 1.20, 80.0)
         return np.clip(delta, -max_v, max_v)
 
     def predict_bbox(self, target_frame: int) -> np.ndarray:
